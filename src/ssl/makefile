@@ -2,7 +2,7 @@ CC = g++
 CFLAGS = -c -Wall -g -I../tcp -I../cryptopp
 LDFLAGS = 
 
-SRC = ssl_server.cc ssl_client.cc ssl.cc crypto_adaptor.cc
+SRC = ssl_server.cc ssl_client.cc ssl.cc crypto_adaptor.cc ssl_handshake.cc
 OBJ = $(SRC:.cc=.o)
 TARGET = libmyssl.a
 

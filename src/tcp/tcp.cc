@@ -134,7 +134,7 @@ TCP* TCP::socket_accept() {
 
 int TCP::socket_connect(const std::string &ip_addr, int port) {
   int retcode;
-  struct sockaddr_in cxn_addr; 
+  struct sockaddr_in cxn_addr;
   struct hostent* host;
 
   memset(&cxn_addr, 0, sizeof(cxn_addr)); 

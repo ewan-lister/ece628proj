@@ -13,6 +13,7 @@
 #include "crypto_adaptor.h"
 #include "logger.h"
 #include "utils.h"
+#include "ssl_handshake.h"
 
 using namespace std;
 
@@ -47,8 +48,23 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   }
 
   // IMPLEMENT HANDSHAKE HERE
+  // 1. Sent Client Hello message
+  if (send_hello(this) != 0) {
+    cerr << "Couldn't send Client Hello" << endl;
+    return -1;
+  }
 
-  return -1;
+
+
+  // Handle RSA/DHE
+
+  // Handle handshake
+
+  // Handle key exchange
+
+  // Save key and key len
+  
+  return 0;
 }
 
 int SslClient::close() {

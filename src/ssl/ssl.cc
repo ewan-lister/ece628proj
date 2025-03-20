@@ -61,8 +61,6 @@ int SSL::set_shared_key(const unsigned char * const shared_key, size_t key_len) 
   return 0;
 }
 
-
-
 // strings: send, recv
 // returns 0 on success, -1 otherwise
 
@@ -75,7 +73,7 @@ int SSL::send(const std::string &send_str) {
   // encrypt
   string cipher_text;
 
-  if ( aes_encrypt(this->shared_key_, this->shared_key_len_,
+  if (aes_encrypt(this->shared_key_, this->shared_key_len_,
                    &cipher_text, send_str) != 0 ) {
     cerr << "Couldn't encrypt." << endl;
     return -1;

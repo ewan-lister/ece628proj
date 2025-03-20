@@ -29,22 +29,22 @@ int main(int argc, char* argv[]) {
 
   cout << "\tc[" << c_idx << "]: connected " << endl;
 
-  if ( ssl_client->send("client says hello") < 0 ) {
-    cout << "\tc[" << c_idx << "]: couldn't send" << endl;
-    return 1;
-  }
+  // if ( ssl_client->send("client says hello") < 0 ) {
+  //   cout << "\tc[" << c_idx << "]: couldn't send" << endl;
+  //   return 1;
+  // }
 
-  cout << "\tc[" << c_idx << "]: sent " << endl;
+  // cout << "\tc[" << c_idx << "]: sent " << endl;
 
-  string recv_buff;
-  if ( ssl_client->recv(&recv_buff) < 0 ) {
-    cout << "\tc[" << c_idx << "]: couldn't receive" << endl;
-    return 1;
-  }
+  // string recv_buff;
+  // if ( ssl_client->recv(&recv_buff) < 0 ) {
+  //   cout << "\tc[" << c_idx << "]: couldn't receive" << endl;
+  //   return 1;
+  // }
 
-  cout << "\tc[" << c_idx << "]: received " << endl;
+  // cout << "\tc[" << c_idx << "]: received " << endl;
 
-  cout << "\tc[" << c_idx << "]: '" << recv_buff << "'" << endl;
+  // cout << "\tc[" << c_idx << "]: '" << recv_buff << "'" << endl;
 
   cout << "\tc[" << c_idx << "]: closing" << endl;
 

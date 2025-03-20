@@ -5,6 +5,8 @@
 #include <errno.h>
 #include <unistd.h>
 
+#include <iostream>
+
 #include <net/if.h>
 #include <arpa/inet.h>
 
@@ -31,7 +33,7 @@ int get_publichostname(std::string *hostname) {
     return -1;
   }
 
-  if( (fd = socket(PF_INET, SOCK_STREAM, 0)) == -1 ) {
+  if( (fd = socket(AF_INET, SOCK_STREAM, 0)) == -1 ) {
     perror("socket");
     return -1;
   } 
@@ -43,10 +45,11 @@ int get_publichostname(std::string *hostname) {
   }
 
   for( curif = ifs; curif && curif->if_name ; curif++ ) {
+    cout << "network interface: " << curif->if_name << endl;
     strncpy(req.ifr_name, curif->if_name, IFNAMSIZ);
     req.ifr_name[IFNAMSIZ] = 0;
     if (ioctl(fd, SIOCGIFADDR, &req) < 0) {
-      // perror("ioctl");
+      perror("ioctl");
       continue;
     }
 
@@ -59,10 +62,13 @@ int get_publichostname(std::string *hostname) {
 
     // skip the loopback and 192.x addresses 
     *hostname = "undefined";
+    cout << "Address: " << ip_addr_buff << endl;
     if ( strncmp(ip_addr_buff, "0.", 2) == 0 ) {
       continue;
     } else if ( strncmp(ip_addr_buff, "127.", 4) == 0 ) {
-      continue;
+      *hostname = string(ip_addr_buff);
+      break;
+      // continue;
     } else if ( strncmp(ip_addr_buff, "192.", 4) == 0 ) {
       continue;
     } else {

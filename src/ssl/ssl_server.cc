@@ -14,6 +14,7 @@
 #include "tcp.h"
 #include "logger.h"
 #include "utils.h"
+#include "ssl_handshake.h"
 
 using namespace std;
 
@@ -58,6 +59,8 @@ SSL* SslServer::accept() {
     return NULL;
   }
 
+  cout << "Server accept" << endl;
+
   TCP* cxn = this->tcp_->socket_accept();
   if ( cxn == NULL ) {
     cerr << "error when accepting" << endl;
@@ -69,9 +72,25 @@ SSL* SslServer::accept() {
   SSL* new_ssl_cxn = new SSL(cxn);
   this->clients_.push_back(new_ssl_cxn);
 
-  // IMPLEMENT HANDSHAKE HERE
+  // cout << "Connection build" << endl;
 
-  return NULL;
+  // IMPLEMENT HANDSHAKE HERE
+  // Wait for Client Hello and print
+  char* client_random;
+  recv_hello(new_ssl_cxn, client_random);
+
+  
+
+
+  // Handle RSA/DHE
+
+  // Handle handshake
+
+  // Handle key exchange
+
+  // Save key and key len
+
+  return new_ssl_cxn;
 }
 
 int SslServer::shutdown() {
