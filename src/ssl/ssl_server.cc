@@ -77,9 +77,17 @@ SSL* SslServer::accept() {
   // IMPLEMENT HANDSHAKE HERE
   // Wait for Client Hello and print
   char* client_random;
-  recv_hello(new_ssl_cxn, client_random);
+  if(recv_hello(new_ssl_cxn, client_random) != 0) { 
+    cout << "Could not receive Client Hello" << endl;
+    return NULL;
+  }
 
-  
+  char* server_random;
+  generate_random(server_random);
+  if(send_hello(new_ssl_cxn, server_random) != 0) {
+    cout << "Could not send Server Hello" << endl;
+    return NULL;
+  }
 
 
   // Handle RSA/DHE

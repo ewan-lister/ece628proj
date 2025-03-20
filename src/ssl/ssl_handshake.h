@@ -8,8 +8,9 @@
 #include "integer.h"
 #include "ssl.h"
 
+void generate_random(char*& random);
 
-int send_hello(SslClient* client);
+int send_hello(SSL* client, char* random);
 
 int recv_hello(SSL* server, char*& client_random);
 

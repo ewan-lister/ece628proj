@@ -49,12 +49,19 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
 
   // IMPLEMENT HANDSHAKE HERE
   // 1. Sent Client Hello message
-  if (send_hello(this) != 0) {
+  char* client_random;
+  generate_random(client_random);
+  if (send_hello(this, client_random) != 0) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
   }
 
 
+  char* server_random;
+  if (recv_hello(this, server_random) != 0) {
+    cerr << "Couldn't revert Server Hello" << endl;
+    return -1;
+  }
 
   // Handle RSA/DHE
 
@@ -64,6 +71,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
 
   // Save key and key len
   
+  free(client_random);
+  free(server_random);
   return 0;
 }
 

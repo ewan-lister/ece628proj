@@ -3,30 +3,54 @@
 #include "integer.h"
 
 #include <iostream>
+#include <iomanip>
+#include <ctime>
+#include <cryptlib.h>
+#include <osrng.h>
+
 
 #include "ssl_client.h"
 #include "ssl.h"
 
 using namespace std;
+using namespace CryptoPP;
 
-int send_hello(SslClient* client) {
+
+void generate_random(char*& random) {
+    byte temp[32];
+    // UNIX timestamp (4 bytes)
+    std::time_t currentTime = std::time(nullptr);
+    temp[0] = (currentTime >> 24) & 0xFF;
+    temp[1] = (currentTime >> 16) & 0xFF;
+    temp[2] = (currentTime >> 8) & 0xFF;
+    temp[3] = currentTime & 0xFF;
+
+    // 28 secure random bytes
+    AutoSeededRandomPool rng;
+    rng.GenerateBlock(temp + 4, 28); // Fill remaining 28 bytes
+
+    int size = sizeof(temp);
+    random = (char*)malloc(size+1);
+    memcpy(random, temp, size);
+}
+
+int send_hello(SSL* client, char* random) {
     SSL::Record send_record;
     send_record.hdr.type = SSL::HS_CLIENT_HELLO;
     send_record.hdr.version = SSL::VER_99;
-    
-    string client_hello = "Client hello";
-    char* data = (char*)malloc(client_hello.length()*sizeof(char));
+    // string client_hello = "Client hello";
+    // char* data = (char*)malloc(client_hello.length()*sizeof(char));
     // Replace client_hello with random
-    memcpy(data, client_hello.c_str(), client_hello.length());
-    send_record.data = data;
+    // memcpy(data, client_hello.c_str(), client_hello.length());
+    send_record.data = random;
     
     // send
     if(client->send(send_record) != 0) {
-      free(send_record.data);
+      // free(send_record.data);
       return -1;
     }
     
-    free(send_record.data);
+    // free(send_record.data);
     return 0;
 }
 
