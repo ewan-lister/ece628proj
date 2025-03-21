@@ -1,0 +1,5 @@
+src/tcp/*.o
+src/tcp/*.a
+src/ssl/*.o
+src/ssl/*.a
+tst/ssl/*.o
