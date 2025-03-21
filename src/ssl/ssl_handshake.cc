@@ -1,20 +1,100 @@
+#define CERT_EXPIRY_DAYS 365  // 1 year validity
+
 #include "stdlib.h"
 #include "string.h"
 #include "integer.h"
 
 #include <iostream>
+#include <fstream>
 #include <iomanip>
 #include <ctime>
 #include <cryptlib.h>
 #include <osrng.h>
+#include <files.h>
+#include <rsa.h>
 
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/asn1.h>
+#include <openssl/bn.h>
+#include <openssl/evp.h>
 
 #include "ssl_client.h"
 #include "ssl.h"
 
 using namespace std;
-using namespace CryptoPP;
 
+// Function to generate RSA keys using Crypto++
+void generate_rsa_key(std::string privKeyFile, std::string pubKeyFile) {
+    CryptoPP::AutoSeededRandomPool rng;
+
+    // Generate 2048-bit RSA key pair
+    CryptoPP::RSA::PrivateKey privateKey;
+    privateKey.GenerateRandomWithKeySize(rng, 2048);
+
+    CryptoPP::RSA::PublicKey publicKey;
+    publicKey.AssignFrom(privateKey);
+
+    // Save the private key in PEM format
+    CryptoPP::FileSink privFile(privKeyFile.c_str());
+    privateKey.Save(privFile);
+
+    // Save the public key in PEM format
+    CryptoPP::FileSink pubFile(pubKeyFile.c_str());
+    publicKey.Save(pubFile);
+}
+
+// Function to load Crypto++ RSA key into OpenSSL EVP_PKEY format
+EVP_PKEY* load_crypto_rsa_key(const std::string& privKeyFile) {
+    FILE* file = fopen(privKeyFile.c_str(), "rb");
+    if (!file) {
+        std::cerr << "Error opening private key file: " << privKeyFile << std::endl;
+        return nullptr;
+    }
+
+    EVP_PKEY* pkey = PEM_read_PrivateKey(file, nullptr, nullptr, nullptr);
+    fclose(file);
+
+    return pkey;
+}
+
+// Function to generate a self-signed certificate
+void generate_self_signed_cert(const char* privKeyFile, const char* certFile) {
+    EVP_PKEY* pkey = load_crypto_rsa_key(privKeyFile);
+    if (!pkey) {
+        std::cerr << "Failed to load private key.\n";
+        return;
+    }
+
+    // Create X.509 certificate
+    X509* x509 = X509_new();
+    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+    
+    X509_gmtime_adj(X509_get_notBefore(x509), 0);
+    X509_gmtime_adj(X509_get_notAfter(x509), 60L * 60L * 24L * CERT_EXPIRY_DAYS);
+
+    X509_set_pubkey(x509, pkey);
+
+    // Set subject name
+    X509_NAME* name = X509_get_subject_name(x509);
+    X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (const unsigned char*)"US", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (const unsigned char*)"My Company", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char*)"localhost", -1, -1, 0);
+
+    X509_set_issuer_name(x509, name);  // Self-signed
+
+    // Sign certificate with private key
+    X509_sign(x509, pkey, EVP_sha256());
+
+    // Write certificate to file
+    FILE* cert_file = fopen(certFile, "wb");
+    PEM_write_X509(cert_file, x509);
+    fclose(cert_file);
+
+    // Cleanup
+    EVP_PKEY_free(pkey);
+    X509_free(x509);
+}
 
 void generate_random(char*& random) {
     byte temp[32];
@@ -26,7 +106,7 @@ void generate_random(char*& random) {
     temp[3] = currentTime & 0xFF;
 
     // 28 secure random bytes
-    AutoSeededRandomPool rng;
+    CryptoPP::AutoSeededRandomPool rng;
     rng.GenerateBlock(temp + 4, 28); // Fill remaining 28 bytes
 
     int size = sizeof(temp);

@@ -4,9 +4,16 @@
 #include "string.h"
 #include "ssl_client.h"
 
+#include <openssl/evp.h>
 
 #include "integer.h"
 #include "ssl.h"
+
+void generate_rsa_key(std::string privKeyFile, std::string pubKeyFile);
+
+EVP_PKEY* load_crypto_rsa_key(const std::string& privKeyFile);
+
+void generate_self_signed_cert(const char* privKeyFile, const char* certFile);
 
 void generate_random(char*& random);
 
