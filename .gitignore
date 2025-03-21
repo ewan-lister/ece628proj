@@ -1,3 +1,4 @@
+.DS_Store
 src/tcp/*.o
 src/tcp/*.a
 src/ssl/*.o
