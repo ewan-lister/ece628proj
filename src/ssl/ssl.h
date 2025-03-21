@@ -8,7 +8,7 @@
 class TCP;
 class Logger;
 
-class SSL {
+class Ssl {
  // some types and constants
  public:
   //////////////////////////////////////////////
@@ -56,9 +56,9 @@ class SSL {
  //////////////////////////////////////////////
  // ssl functions
  public:
-  SSL();
-  SSL(TCP* tcp);
-  virtual ~SSL();
+  Ssl();
+  Ssl(TCP* tcp);
+  virtual ~Ssl();
 
   std::string get_hostname() const;
   int get_port() const;

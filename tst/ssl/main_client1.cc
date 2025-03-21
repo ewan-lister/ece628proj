@@ -22,7 +22,7 @@ int main(int argc, char* argv[]) {
 
   SslClient* ssl_client = new SslClient();
 
-  if ( ssl_client->connect(hostname, port, SSL::KE_DHE) < 0 ) {
+  if ( ssl_client->connect(hostname, port, Ssl::KE_DHE) < 0 ) {
     cout << "\tc[" << c_idx << "]: couldn't connect" << endl;
     return 1;
   }

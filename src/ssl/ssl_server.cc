@@ -75,7 +75,7 @@ int SslServer::start(int num_clients) {
   return this->tcp_->socket_listen(num_clients);
 }
 
-SSL* SslServer::accept() {
+Ssl* SslServer::accept() {
   if ( this->closed_ ) {
     return NULL;
   }
@@ -90,7 +90,7 @@ SSL* SslServer::accept() {
 
   cxn->set_logger(this->logger_);
 
-  SSL* new_ssl_cxn = new SSL(cxn);
+  Ssl* new_ssl_cxn = new Ssl(cxn);
   this->clients_.push_back(new_ssl_cxn);
 
   // cout << "Connection build" << endl;
@@ -129,7 +129,7 @@ int SslServer::shutdown() {
 
   // pop all clients
   while ( !this->clients_.empty() ) {
-    SSL* cxn = this->clients_.back();
+    Ssl* cxn = this->clients_.back();
     this->clients_.pop_back();
     if ( cxn != NULL ) {
       delete cxn;
@@ -138,8 +138,8 @@ int SslServer::shutdown() {
   return 0;
 }
 
-vector<SSL*> SslServer::get_clients() const {
-  return vector<SSL*>(this->clients_);
+vector<Ssl*> SslServer::get_clients() const {
+  return vector<Ssl*>(this->clients_);
 }
 
 int SslServer::broadcast(const string &msg) {
@@ -152,7 +152,7 @@ int SslServer::broadcast(const string &msg) {
   // this->logger_->log("broadcast:");
   // this->logger_->log_raw(msg);
 
-  for ( vector<SSL*>::iterator it = this->clients_.begin() ;
+  for ( vector<Ssl*>::iterator it = this->clients_.begin() ;
         it != this->clients_.end() ; ++it ) {
     ssize_t send_len;
     send_len = (*it)->send(msg);

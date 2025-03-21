@@ -11,19 +11,19 @@
 
 using namespace std;
 
-SSL::SSL() {
+Ssl::Ssl() {
   this->tcp_ = new TCP();
   shared_key_ = NULL;
   shared_key_len_ = 0;
 }
 
-SSL::SSL(TCP* tcp) {
+Ssl::Ssl(TCP* tcp) {
   this->tcp_ = tcp;
   shared_key_ = NULL;
   shared_key_len_ = 0;
 }
 
-SSL::~SSL() {
+Ssl::~Ssl() {
   if ( shared_key_ != NULL ) {
     free(shared_key_);
   }
@@ -35,7 +35,7 @@ SSL::~SSL() {
 
 // hostname and port
 
-string SSL::get_hostname() const {
+string Ssl::get_hostname() const {
   string hostname;
   if ( this->tcp_->get_hostname(&hostname) != 0 ) {
     printf("Can't get hostname.\n");
@@ -44,7 +44,7 @@ string SSL::get_hostname() const {
   return hostname;
 }
 
-int SSL::get_port() const {
+int Ssl::get_port() const {
   int port;
   if ( this->tcp_->get_port(&port) != 0 ) {
     printf("Can't get port.\n");
@@ -54,7 +54,7 @@ int SSL::get_port() const {
 }
 
 // set key
-int SSL::set_shared_key(const unsigned char * const shared_key, size_t key_len) {
+int Ssl::set_shared_key(const unsigned char * const shared_key, size_t key_len) {
   this->shared_key_len_ = key_len;
   this->shared_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
   memcpy(this->shared_key_, shared_key, key_len);
@@ -64,7 +64,7 @@ int SSL::set_shared_key(const unsigned char * const shared_key, size_t key_len) 
 // strings: send, recv
 // returns 0 on success, -1 otherwise
 
-int SSL::send(const std::string &send_str) {
+int Ssl::send(const std::string &send_str) {
   // make a record
   Record send_record;
   send_record.hdr.type = REC_APP_DATA;
@@ -94,7 +94,7 @@ int SSL::send(const std::string &send_str) {
   return ret_code;
 }
 
-int SSL::recv(std::string *recv_str) {
+int Ssl::recv(std::string *recv_str) {
   // receive record
   Record recv_record;
   if ( recv(&recv_record) == -1 ) {
@@ -126,7 +126,7 @@ int SSL::recv(std::string *recv_str) {
 // records: send, recv
 // returns 0 on success, -1 otherwise
 
-int SSL::send(const Record &send_record) {
+int Ssl::send(const Record &send_record) {
   if ( this->tcp_ == NULL ) {
     cerr << "SSL::send: tcp not set." << endl;
     return -1;
@@ -158,7 +158,7 @@ int SSL::send(const Record &send_record) {
   return 0;
 }
 
-int SSL::recv(Record *recv_record) {
+int Ssl::recv(Record *recv_record) {
   if ( this->tcp_ == NULL ) {
     cerr << "SSL::recv: tcp not set." << endl;
     return -1;

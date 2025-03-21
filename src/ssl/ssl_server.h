@@ -5,29 +5,30 @@
 
 #include <string>
 #include <vector>
+#include <openssl/types.h>
 
 #include "integer.h"
 #include "rsa.h"
 
-class SslServer: public SSL {
+class SslServer: public Ssl {
  public:
   SslServer();
   virtual ~SslServer();
 
   virtual int start(int num_clients=1000);
-  virtual SSL* accept(); // blocking call
+  virtual Ssl* accept(); // blocking call
   virtual int shutdown();
 
-  virtual std::vector<SSL*> get_clients() const;
+  virtual std::vector<Ssl*> get_clients() const;
 
   virtual int broadcast(const std::string &msg);
 
-  void SslServer::handleErrors(const std::string& msg);
+  void handleErrors(const std::string& msg);
 
   const BIGNUM* dh_pub_key;
 
  private:
-  std::vector<SSL*> clients_;
+  std::vector<Ssl*> clients_;
   bool closed_;
 
   // for DHE

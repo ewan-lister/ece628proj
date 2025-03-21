@@ -14,7 +14,7 @@ using namespace std;
 #define NUM_THREADS 2
 
 void* handle_client(void* args) {
-  SSL* ssl_cxn = (SSL*)args;
+  Ssl* ssl_cxn = (Ssl*)args;
 
   if ( ssl_cxn != NULL ) {
     string recv_msg;
@@ -49,7 +49,7 @@ int main() {
 
   pthread_t threads[NUM_THREADS];
   for( int i = 0 ; i < NUM_THREADS ; i += 1 ) {
-    SSL* client = s->accept();
+    Ssl* client = s->accept();
 
     if ( client == NULL ) {
       cerr << "Error: couldn't accept" << endl;

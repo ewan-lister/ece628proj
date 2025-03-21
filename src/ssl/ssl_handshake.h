@@ -10,8 +10,8 @@
 
 void generate_random(char*& random);
 
-int send_hello(SSL* client, char* random);
+int send_hello(Ssl* client, char* random);
 
-int recv_hello(SSL* server, char*& client_random);
+int recv_hello(Ssl* server, char*& client_random);
 
 #endif //SSL_HANDSHAKE_H

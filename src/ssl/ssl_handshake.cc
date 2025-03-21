@@ -34,10 +34,10 @@ void generate_random(char*& random) {
     memcpy(random, temp, size);
 }
 
-int send_hello(SSL* client, char* random) {
-    SSL::Record send_record;
-    send_record.hdr.type = SSL::HS_CLIENT_HELLO;
-    send_record.hdr.version = SSL::VER_99;
+int send_hello(Ssl* client, char* random) {
+    Ssl::Record send_record;
+    send_record.hdr.type = Ssl::HS_CLIENT_HELLO;
+    send_record.hdr.version = Ssl::VER_99;
     // string client_hello = "Client hello";
     // char* data = (char*)malloc(client_hello.length()*sizeof(char));
     // Replace client_hello with random
@@ -54,22 +54,22 @@ int send_hello(SSL* client, char* random) {
     return 0;
 }
 
-int recv_hello(SSL* server, char*& client_random) { 
+int recv_hello(Ssl* server, char*& client_random) { 
     // receive record
-    SSL::Record recv_record;
+    Ssl::Record recv_record;
     if ( server->recv(&recv_record) == -1 ) {
       cerr << "Couldn't receive." << endl;
       return -1;
     }
   
     // check type
-    if (recv_record.hdr.type != SSL::HS_CLIENT_HELLO) {
+    if (recv_record.hdr.type != Ssl::HS_CLIENT_HELLO) {
       cerr << "Not client Hello." << endl;
       return -1;
     }
   
     // check version
-    if (recv_record.hdr.version != SSL::VER_99) {
+    if (recv_record.hdr.version != Ssl::VER_99) {
       cerr << "Not VER_99." << endl;
       return -1;
     }

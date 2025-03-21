@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-class SslClient: public SSL {
+class SslClient: public Ssl {
  public:
   SslClient();
   virtual ~SslClient();
