@@ -48,7 +48,7 @@ int aes_encrypt(const unsigned char* key, size_t key_len,
 
   // https://www.cryptopp.com/wiki/CBC_Mode
   SecByteBlock aes_key(key, key_len);
-  byte iv[AES::BLOCKSIZE];
+  std::byte iv[AES::BLOCKSIZE];
   memset(iv, 0, AES::BLOCKSIZE);
 
   try {
@@ -73,7 +73,7 @@ int aes_decrypt(const unsigned char* key, size_t key_len,
                 std::string *plain_text, const std::string &cipher_text) {
 
   SecByteBlock aes_key(key, key_len);
-  byte iv[AES::BLOCKSIZE];
+  std::byte iv[AES::BLOCKSIZE];
   memset(iv, 0, AES::BLOCKSIZE);
 
   try {

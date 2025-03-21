@@ -15,6 +15,9 @@
 #include "logger.h"
 #include "utils.h"
 #include "ssl_handshake.h"
+#include <openssl/dh.h> // have to homebrew install openssl to use this
+#include <openssl/bn.h>
+#include <vector>
 
 using namespace std;
 
@@ -32,7 +35,21 @@ SslServer::SslServer() {
   this->closed_ = false;
 
   // init dhe
-  generate_pqg(this->dh_p_, this->dh_q_, this->dh_g_);
+  // generate_pqg(this->dh_p_, this->dh_q_, this->dh_g_);
+
+  // construct DH object for encryption
+  dh = DH_new();
+  if (!dh) handleErrors("Failed to create DH structure");
+  if (!DH_generate_parameters_ex(dh, 3072, DH_GENERATOR_2, nullptr))
+  handleErrors("Failed to generate DH parameters");
+
+  // grab DH parameters and keys
+  if (!DH_generate_key(dh)) handleErrors("Failed to generate DH key pair");
+  dh_pub_key = DH_get0_pub_key(dh);
+  dh_priv_key = DH_get0_priv_key(dh);
+
+  std::cout << "DH Public Key: " << BN_bn2hex(dh_pub_key) << std::endl;
+  std::cout << "DH Private Key: " << BN_bn2hex(dh_priv_key) << std::endl;
 
   // init rsa
   generate_rsa_keys(this->private_key_, this->public_key_);
@@ -45,6 +62,10 @@ SslServer::~SslServer() {
   delete this->logger_;
 }
 
+void SslServer::handleErrors(const std::string& msg) {
+  std::cerr << "Error: " << msg << std::endl;
+  exit(EXIT_FAILURE);
+}
 
 int SslServer::start(int num_clients) {
   if ( this->closed_ ) {
