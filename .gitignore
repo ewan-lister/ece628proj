@@ -1,5 +1,6 @@
 .DS_Store
 .vscode
+.idea
 src/tcp/*.o
 src/tcp/*.a
 src/ssl/*.o

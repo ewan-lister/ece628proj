@@ -9,6 +9,7 @@
 #include "dh.h"
 #include "integer.h"
 #include "osrng.h"
+#include "ssl.h"
 
 #include "crypto_adaptor.h"
 #include "tcp.h"
@@ -33,6 +34,20 @@ SslServer::SslServer() {
   this->logger_->log("Server Log at " + datetime);
 
   this->closed_ = false;
+
+  // generate self-signed cert for every instance
+  string instance_name = "server_cert";
+  string private_key_file = instance_name + ".priv";
+  string public_key_file = instance_name + ".pub";
+  CryptoPP::RSA::PrivateKey cert_private_key;
+  CryptoPP::RSA::PublicKey cert_public_key;
+  generate_rsa_keys(cert_private_key, cert_public_key);
+  save_rsa_private_key(cert_private_key, private_key_file); // Update for multiple clients or servers
+  generate_self_signed_cert(private_key_file.c_str(), public_key_file.c_str());
+
+  if (!read_cert_file(cert_file_contents, public_key_file)) {
+    this->logger_->log("Failed to read certificate file");
+  }
 
   // init dhe
   // generate_pqg(this->dh_p_, this->dh_q_, this->dh_g_);
@@ -98,27 +113,41 @@ Ssl* SslServer::accept() {
   // IMPLEMENT HANDSHAKE HERE
   // Wait for Client Hello and print
   char* client_random;
-  if(recv_hello(new_ssl_cxn, client_random) != 0) { 
-    cout << "Could not receive Client Hello" << endl;
+  if(recv_client_hello(new_ssl_cxn, client_random) != 0) {
+    cerr << "Could not receive Client Hello" << endl;
     return NULL;
   }
+  cout << "Received Client Hello: " << client_random << endl;
 
   char* server_random;
   generate_random(server_random);
-  if(send_hello(new_ssl_cxn, server_random) != 0) {
+  if(send_server_hello(new_ssl_cxn, server_random) != 0) {
     cout << "Could not send Server Hello" << endl;
     return NULL;
   }
+  cout << "Sent Server Hello: " << server_random << endl;
 
+  if (send_cert(new_ssl_cxn, cert_file_contents) != 0) {
+    cerr << "Error sending certificate file" << endl;
+    return NULL;
+  }
+
+  cout << "Sent certificate file: " << cert_file_contents << endl;
+
+  // Send CertificateRequest
+
+  // Send ServerKeyExchange
+
+  // Send ServerHelloDone
 
   // Handle RSA/DHE
-
   // Handle handshake
-
   // Handle key exchange
-
   // Save key and key len
 
+  free(client_random);
+  free(server_random);
+  free(cert_file_contents);
   return new_ssl_cxn;
 }
 

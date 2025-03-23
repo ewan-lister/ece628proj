@@ -8,6 +8,7 @@
 #include "dh.h"
 #include "integer.h"
 #include "osrng.h"
+#include "ssl.h"
 
 #include "tcp.h"
 #include "crypto_adaptor.h"
@@ -51,17 +52,25 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // 1. Sent Client Hello message
   char* client_random;
   generate_random(client_random);
-  if (send_hello(this, client_random) != 0) {
+  if (send_client_hello(this, client_random) != 0) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
   }
-
+  cout << "Sent Client Hello: " << client_random << endl;
 
   char* server_random;
-  if (recv_hello(this, server_random) != 0) {
-    cerr << "Couldn't revert Server Hello" << endl;
+  if (recv_server_hello(this, server_random) != 0) {
+    cerr << "Couldn't receive Server Hello" << endl;
     return -1;
   }
+  cout << "Received Server Hello: " << server_random << endl;
+
+  char* certificate;
+  if (recv_cert(this, certificate) != 0) {
+    cerr << "Couldn't receive Certificate" << endl;
+    return -1;
+  }
+  cout << "Received Certificate: " << certificate << endl;
 
   // Handle RSA/DHE
 

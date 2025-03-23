@@ -9,6 +9,7 @@
 
 #include "integer.h"
 #include "rsa.h"
+#include "ssl.h"
 
 class SslServer: public Ssl {
  public:
@@ -25,7 +26,8 @@ class SslServer: public Ssl {
 
   void handleErrors(const std::string& msg);
 
-  const BIGNUM* dh_pub_key;
+ const BIGNUM* dh_pub_key;
+ char* cert_file_contents;
 
  private:
   std::vector<Ssl*> clients_;
@@ -38,7 +40,6 @@ class SslServer: public Ssl {
   DH* dh;
   const BIGNUM* dh_priv_key; // pub_key is in public field
 
-  // for RSA
   CryptoPP::RSA::PrivateKey private_key_;
   CryptoPP::RSA::PublicKey public_key_;
 };

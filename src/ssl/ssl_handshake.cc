@@ -1,5 +1,7 @@
 #define CERT_EXPIRY_DAYS 365  // 1 year validity
 
+#include "ssl_handshake.h"
+
 #include "stdlib.h"
 #include "string.h"
 #include "integer.h"
@@ -24,24 +26,9 @@
 
 using namespace std;
 
-// Function to generate RSA keys using Crypto++
-void generate_rsa_key(std::string privKeyFile, std::string pubKeyFile) {
-    CryptoPP::AutoSeededRandomPool rng;
-
-    // Generate 2048-bit RSA key pair
-    CryptoPP::RSA::PrivateKey privateKey;
-    privateKey.GenerateRandomWithKeySize(rng, 2048);
-
-    CryptoPP::RSA::PublicKey publicKey;
-    publicKey.AssignFrom(privateKey);
-
-    // Save the private key in PEM format
-    CryptoPP::FileSink privFile(privKeyFile.c_str());
-    privateKey.Save(privFile);
-
-    // Save the public key in PEM format
-    CryptoPP::FileSink pubFile(pubKeyFile.c_str());
-    publicKey.Save(pubFile);
+void save_rsa_private_key(CryptoPP::RSA::PrivateKey private_key, std::string private_key_file) {
+  CryptoPP::FileSink privFile(private_key_file.c_str());
+  private_key.Save(privFile);
 }
 
 // Function to load Crypto++ RSA key into OpenSSL EVP_PKEY format
@@ -55,7 +42,51 @@ EVP_PKEY* load_crypto_rsa_key(const std::string& privKeyFile) {
     EVP_PKEY* pkey = PEM_read_PrivateKey(file, nullptr, nullptr, nullptr);
     fclose(file);
 
+    cout << "Private key ptr: " << pkey << endl;
+
     return pkey;
+}
+
+int read_cert_file(char*& cert_contents, const string& file_path) {
+    // Open the certificate file
+    FILE* cert_file = fopen(file_path.c_str(), "r");
+    if (!cert_file) {
+        std::cerr << "Error: Could not open certificate file: " << file_path << std::endl;
+        return -1;
+    }
+
+    // Load the certificate into an X509 structure
+    X509* cert = PEM_read_X509(cert_file, nullptr, nullptr, nullptr);
+    fclose(cert_file);
+
+    if (!cert) {
+        std::cerr << "Error: Could not load certificate." << std::endl;
+        return -1;
+    }
+
+    // Convert X509 to a memory BIO
+    BIO* mem = BIO_new(BIO_s_mem());
+    if (!PEM_write_bio_X509(mem, cert)) {
+        std::cerr << "Error: Could not write certificate to BIO." << std::endl;
+        X509_free(cert);
+        BIO_free(mem);
+        return -1;
+    }
+
+    // Get the length of the data and copy it into a char*
+    char* cert_buffer;
+    long cert_len = BIO_get_mem_data(mem, &cert_buffer);
+
+    // Allocate memory for the content (since BIO_get_mem_data does not return a null-terminated string)
+    cert_contents = static_cast<char *>(malloc(cert_len + 1));
+    memcpy(cert_contents, cert_buffer, cert_len);
+    cert_contents[cert_len] = '\0'; // Null-terminate
+
+    // Free resources
+    BIO_free(mem);
+    X509_free(cert);
+
+    return 0;
 }
 
 // Function to generate a self-signed certificate
@@ -69,7 +100,7 @@ void generate_self_signed_cert(const char* privKeyFile, const char* certFile) {
     // Create X.509 certificate
     X509* x509 = X509_new();
     ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
-    
+
     X509_gmtime_adj(X509_get_notBefore(x509), 0);
     X509_gmtime_adj(X509_get_notAfter(x509), 60L * 60L * 24L * CERT_EXPIRY_DAYS);
 
@@ -88,7 +119,9 @@ void generate_self_signed_cert(const char* privKeyFile, const char* certFile) {
 
     // Write certificate to file
     FILE* cert_file = fopen(certFile, "wb");
-    PEM_write_X509(cert_file, x509);
+    if ( !PEM_write_X509(cert_file, x509)) {
+        cerr << "Error writing certificate to file." << endl;
+    }
     fclose(cert_file);
 
     // Cleanup
@@ -114,49 +147,77 @@ void generate_random(char*& random) {
     memcpy(random, temp, size);
 }
 
-int send_hello(Ssl* client, char* random) {
+int send_record(Ssl* client, uint8_t type, uint16_t version, char* data) {
     Ssl::Record send_record;
-    send_record.hdr.type = Ssl::HS_CLIENT_HELLO;
-    send_record.hdr.version = Ssl::VER_99;
-    // string client_hello = "Client hello";
-    // char* data = (char*)malloc(client_hello.length()*sizeof(char));
-    // Replace client_hello with random
-    // memcpy(data, client_hello.c_str(), client_hello.length());
-    send_record.data = random;
-    
+    send_record.hdr.type = type;
+    send_record.hdr.version = version;
+    if (data != nullptr) {
+        send_record.hdr.length = strlen(data);
+        send_record.data = data;
+    } else {
+        send_record.hdr.length = 0;
+        send_record.data = data;
+    }
+
     // send
     if(client->send(send_record) != 0) {
-      // free(send_record.data);
-      return -1;
+        return -1;
     }
-    
-    // free(send_record.data);
+
     return 0;
 }
 
-int recv_hello(Ssl* server, char*& client_random) { 
+int send_client_hello(Ssl* client, char* random) {
+    return send_record(client, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, random);
+}
+
+int send_server_hello(Ssl* client, char* random) {
+    return send_record(client, Ssl::HS_SERVER_HELLO, Ssl::VER_99, random);
+}
+
+int send_cert(Ssl* client, char* cert) {
+    return send_record(client, Ssl::HS_CERTIFICATE, Ssl::VER_99, cert);
+}
+
+int send_cert_request(Ssl* client) {
+    return send_record(client, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99, nullptr);
+}
+
+int recv_data(Ssl* server, char*& data,const uint8_t type,const uint16_t version) {
     // receive record
     Ssl::Record recv_record;
     if ( server->recv(&recv_record) == -1 ) {
-      cerr << "Couldn't receive." << endl;
-      return -1;
+        cerr << "Couldn't receive." << endl;
+        return -1;
     }
-  
+
     // check type
-    if (recv_record.hdr.type != Ssl::HS_CLIENT_HELLO) {
-      cerr << "Not client Hello." << endl;
-      return -1;
+    if (recv_record.hdr.type != type) {
+        cerr << "Wrong message type" << endl;
+        return -1;
     }
-  
+
     // check version
-    if (recv_record.hdr.version != Ssl::VER_99) {
-      cerr << "Not VER_99." << endl;
-      return -1;
+    if (recv_record.hdr.version != version) {
+        cerr << "Wrong version" << endl;
+        return -1;
     }
-  
-    client_random = (char*)malloc(recv_record.hdr.length);
-    memcpy(client_random, recv_record.data, recv_record.hdr.length);
-    cout << "Received: " << client_random << endl;
-  
+
+    data = (char*)malloc(recv_record.hdr.length);
+    memcpy(data, recv_record.data, recv_record.hdr.length);
+    cout << "Received: " << data << endl;
+
     return 0;
+}
+
+int recv_server_hello(Ssl* server, char*& data) {
+    return recv_data(server, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
+}
+
+int recv_client_hello(Ssl* server, char*& data) {
+    return recv_data(server, data, Ssl::HS_CLIENT_HELLO, Ssl::VER_99);
+}
+
+int recv_cert(Ssl* server, char*& data) {
+    return recv_data(server, data, Ssl::HS_CERTIFICATE, Ssl::VER_99);
 }
