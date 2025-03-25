@@ -19,16 +19,50 @@
 #include <openssl/x509.h>
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/x509v3.h>
 
 #include "ssl_client.h"
 #include "ssl.h"
 
 using namespace std;
 
+const char* HOSTNAME = "localhost";
+
 void save_rsa_private_key(CryptoPP::RSA::PrivateKey private_key, std::string private_key_file) {
-  CryptoPP::FileSink privFile(private_key_file.c_str());
-  private_key.Save(privFile);
+    // Get key size from Crypto++ key
+    unsigned int keySize = private_key.GetModulus().BitCount();
+
+    // Generate a new OpenSSL key with the same size
+    RSA* rsa = RSA_new();
+    BIGNUM* e = BN_new();
+    BN_set_word(e, 65537); // Standard public exponent
+
+    // Generate key with same bit length
+    if (RSA_generate_key_ex(rsa, keySize, e, NULL) != 1) {
+        std::cerr << "Failed to generate RSA key" << std::endl;
+        BN_free(e);
+        RSA_free(rsa);
+        return;
+    }
+
+    // Create EVP_PKEY structure
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    EVP_PKEY_assign_RSA(pkey, rsa); // pkey now owns rsa
+
+    // Write to file in PEM format
+    FILE* fp = fopen(private_key_file.c_str(), "wb");
+    if (fp) {
+        PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL);
+        fclose(fp);
+    } else {
+        std::cerr << "Failed to open file for writing private key" << std::endl;
+    }
+
+    // Clean up
+    BN_free(e);
+    EVP_PKEY_free(pkey); // This also frees the RSA structure
 }
 
 // Function to load Crypto++ RSA key into OpenSSL EVP_PKEY format
@@ -41,8 +75,6 @@ EVP_PKEY* load_crypto_rsa_key(const std::string& privKeyFile) {
 
     EVP_PKEY* pkey = PEM_read_PrivateKey(file, nullptr, nullptr, nullptr);
     fclose(file);
-
-    cout << "Private key ptr: " << pkey << endl;
 
     return pkey;
 }
@@ -110,7 +142,7 @@ void generate_self_signed_cert(const char* privKeyFile, const char* certFile) {
     X509_NAME* name = X509_get_subject_name(x509);
     X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (const unsigned char*)"US", -1, -1, 0);
     X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (const unsigned char*)"My Company", -1, -1, 0);
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char*)"localhost", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const unsigned char*)HOSTNAME, -1, -1, 0);
 
     X509_set_issuer_name(x509, name);  // Self-signed
 
@@ -147,46 +179,41 @@ void generate_random(char*& random) {
     memcpy(random, temp, size);
 }
 
-int send_record(Ssl* client, uint8_t type, uint16_t version, char* data) {
+int send_record(Ssl* cnx, uint8_t type, uint16_t version, char* data, size_t length) {
     Ssl::Record send_record;
     send_record.hdr.type = type;
     send_record.hdr.version = version;
-    if (data != nullptr) {
-        send_record.hdr.length = strlen(data);
-        send_record.data = data;
-    } else {
-        send_record.hdr.length = 0;
-        send_record.data = data;
-    }
+    send_record.hdr.length = length;
+    send_record.data = data;
 
     // send
-    if(client->send(send_record) != 0) {
+    if(cnx->send(send_record) != 0) {
         return -1;
     }
 
     return 0;
 }
 
-int send_client_hello(Ssl* client, char* random) {
-    return send_record(client, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, random);
+int send_client_hello(Ssl* cnx, char* hello, size_t length) {
+    return send_record(cnx, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, hello, length);
 }
 
-int send_server_hello(Ssl* client, char* random) {
-    return send_record(client, Ssl::HS_SERVER_HELLO, Ssl::VER_99, random);
+int send_server_hello(Ssl* cnx, char* hello, size_t length) {
+    return send_record(cnx, Ssl::HS_SERVER_HELLO, Ssl::VER_99, hello, length);
 }
 
-int send_cert(Ssl* client, char* cert) {
-    return send_record(client, Ssl::HS_CERTIFICATE, Ssl::VER_99, cert);
+int send_cert(Ssl* cnx, char* cert) {
+    return send_record(cnx, Ssl::HS_CERTIFICATE, Ssl::VER_99, cert, strlen(cert));
 }
 
-int send_cert_request(Ssl* client) {
-    return send_record(client, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99, nullptr);
+int send_cert_request(Ssl* cnx) {
+    return send_record(cnx, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99, nullptr, 0);
 }
 
-int recv_data(Ssl* server, char*& data,const uint8_t type,const uint16_t version) {
+int recv_data(Ssl* cnx, char*& data,const uint8_t type,const uint16_t version) {
     // receive record
     Ssl::Record recv_record;
-    if ( server->recv(&recv_record) == -1 ) {
+    if ( cnx->recv(&recv_record) == -1 ) {
         cerr << "Couldn't receive." << endl;
         return -1;
     }
@@ -204,20 +231,289 @@ int recv_data(Ssl* server, char*& data,const uint8_t type,const uint16_t version
     }
 
     data = (char*)malloc(recv_record.hdr.length);
+    cout << "Received data of length " << recv_record.hdr.length << endl;
     memcpy(data, recv_record.data, recv_record.hdr.length);
-    cout << "Received: " << data << endl;
 
     return 0;
 }
 
-int recv_server_hello(Ssl* server, char*& data) {
-    return recv_data(server, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
+int recv_server_hello(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
 }
 
-int recv_client_hello(Ssl* server, char*& data) {
-    return recv_data(server, data, Ssl::HS_CLIENT_HELLO, Ssl::VER_99);
+int recv_client_hello(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_CLIENT_HELLO, Ssl::VER_99);
 }
 
-int recv_cert(Ssl* server, char*& data) {
-    return recv_data(server, data, Ssl::HS_CERTIFICATE, Ssl::VER_99);
+int recv_cert(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_CERTIFICATE, Ssl::VER_99);
+}
+
+int recv_server_hello_done(Ssl* cnx, char* data) {
+    return recv_data(cnx, data, Ssl::HS_SERVER_HELLO_DONE, Ssl::VER_99);
+}
+
+int load_and_verify_certificate(char *&certificate) {
+    // Initialize OpenSSL
+    OpenSSL_add_all_algorithms();
+    ERR_load_crypto_strings();
+
+    int result = -1;
+    X509* cert = nullptr;
+    X509_STORE* store = nullptr;
+    X509_STORE_CTX* ctx = nullptr;
+    BIO* cert_bio = nullptr;
+
+    // Create a BIO for the PEM certificate string
+    cert_bio = BIO_new_mem_buf(certificate, -1);
+    if (!cert_bio) {
+        std::cerr << "Error creating BIO for certificate" << std::endl;
+        goto cleanup;
+    }
+
+    // Read the PEM certificate
+    cert = PEM_read_bio_X509(cert_bio, nullptr, nullptr, nullptr);
+    if (!cert) {
+        std::cerr << "Error parsing PEM certificate" << std::endl;
+        goto cleanup;
+    }
+
+    // 1. Check certificate expiration
+    if (X509_cmp_current_time(X509_get_notBefore(cert)) >= 0) {
+        std::cerr << "Certificate is not yet valid" << std::endl;
+        goto cleanup;
+    }
+
+    if (X509_cmp_current_time(X509_get_notAfter(cert)) <= 0) {
+        std::cerr << "Certificate has expired" << std::endl;
+        goto cleanup;
+    }
+
+    // 2. Check hostname match
+    if (X509_check_host(cert, HOSTNAME, strlen(HOSTNAME), 0, nullptr) <= 0) {
+        std::cerr << "Certificate hostname does not match expected hostname: " << HOSTNAME << std::endl;
+        goto cleanup;
+    }
+
+    // Skip verification unless we are creating an actual signed CA certificate.
+    // // 3. Set up the certificate store with default trusted CAs
+    // store = X509_STORE_new();
+    // if (!store) {
+    //     std::cerr << "Error creating X509_STORE" << std::endl;
+    //     goto cleanup;
+    // }
+    //
+    // // Load default trusted CAs
+    // if (X509_STORE_set_default_paths(store) != 1) {
+    //     std::cerr << "Error loading trusted CA certificates" << std::endl;
+    //     goto cleanup;
+    // }
+    //
+    // // Create a verification context
+    // ctx = X509_STORE_CTX_new();
+    // if (!ctx) {
+    //     std::cerr << "Error creating X509_STORE_CTX" << std::endl;
+    //     goto cleanup;
+    // }
+    //
+    // // Initialize the verification context
+    // if (X509_STORE_CTX_init(ctx, store, cert, nullptr) != 1) {
+    //     std::cerr << "Error initializing verification context" << std::endl;
+    //     goto cleanup;
+    // }
+    //
+    // // Perform actual certificate verification against trusted CAs
+    // if (X509_verify_cert(ctx) != 1) {
+    //     int error = X509_STORE_CTX_get_error(ctx);
+    //     std::cerr << "Certificate verification failed: "
+    //               << X509_verify_cert_error_string(error) << std::endl;
+    //     goto cleanup;
+    // }
+
+    // All verification steps passed successfully
+    std::cout << "Certificate verified successfully!" << std::endl;
+    result = 0;
+
+cleanup:
+    // Free all allocated resources
+    // if (ctx) X509_STORE_CTX_free(ctx);
+    // if (store) X509_STORE_free(store);
+    if (cert) X509_free(cert);
+    if (cert_bio) BIO_free(cert_bio);
+
+    return result;
+}
+
+size_t pack_uint8_at_offset(char* buffer, size_t offset, uint8_t value) {
+    buffer[offset] = static_cast<char>(value);
+    return offset + 1;
+}
+
+size_t pack_uint16_at_offset(char* buffer, size_t offset, uint16_t value) {
+    // Store the value in big-endian format
+    buffer[offset]     = static_cast<char>((value >> 8) & 0xFF); // High byte
+    buffer[offset + 1] = static_cast<char>(value & 0xFF);        // Low byte
+    return offset + 2;
+}
+
+// Unpack uint8_t from a buffer
+size_t unpack_uint8(const char* buffer, size_t offset, uint8_t& value) {
+    value = static_cast<uint8_t>(buffer[offset]);
+    return offset + 1;
+}
+
+// Unpack uint16_t from a buffer (little-endian)
+size_t unpack_uint16(const char* buffer, size_t offset, uint16_t& value) {
+    value = static_cast<uint16_t>(
+        (static_cast<uint8_t>(buffer[offset]) << 8) |     // High byte
+        (static_cast<uint8_t>(buffer[offset + 1]))        // Low byte
+    );
+    return offset + 2;
+}
+
+static size_t pack_bytes(char* buffer, size_t offset, char* data, size_t length) {
+    std::memcpy(buffer + offset, data, length);
+    return offset + length;
+}
+
+
+int pack_client_hello(
+    char*& buffer,
+    uint16_t version,
+    char* random,      // 32 bytes
+    std::vector<uint8_t>& cipher_suites
+) {
+    size_t offset = 0;
+
+    // Placeholder for total handshake message length (2 bytes)
+    size_t length_offset = offset;
+    offset = pack_uint16_at_offset(buffer, offset, 0x0000);  // Placeholder for length
+
+    // Protocol version
+    offset = pack_uint16_at_offset(buffer, offset, version);
+
+    // Random (32 bytes)
+    offset = pack_bytes(buffer, offset, random, 32);
+
+    // Cipher Suites
+    size_t cipher_suites_length_offset = offset;
+    offset = pack_uint16_at_offset(buffer, offset, 0x0000);  // Placeholder for length
+
+    uint16_t total_cipher_suites_length = 0;
+    for (uint8_t suite : cipher_suites) {
+        offset = pack_uint8_at_offset(buffer, offset, suite);
+        total_cipher_suites_length += 1;
+    }
+
+    // Go back and write actual cipher suites length
+    pack_uint16_at_offset(buffer, cipher_suites_length_offset, total_cipher_suites_length);
+
+    // Calculate and write total handshake message length (excluding message type and length bytes)
+    uint16_t total_length = offset - (length_offset + 2);
+    pack_uint16_at_offset(buffer, length_offset, total_length);
+
+    return offset;
+}
+
+int pack_server_hello(
+    char*& buffer,
+    uint16_t version,
+    char* random,      // 32 bytes
+    uint8_t selected_suite
+) {
+    size_t offset = 0;
+
+    // Placeholder for total handshake message length (2 bytes)
+    size_t length_offset = offset;
+    offset = pack_uint16_at_offset(buffer, offset, 0x0000);  // Placeholder for length
+
+    // Protocol version
+    offset = pack_uint16_at_offset(buffer, offset, version);
+
+    // Random (32 bytes)
+    offset = pack_bytes(buffer, offset, random, 32);
+
+    // Cipher Suites
+    offset = pack_uint8_at_offset(buffer, offset, selected_suite);
+
+    // Calculate and write total handshake message length (excluding message type and length bytes)
+    uint16_t total_length = offset - (length_offset + 2);
+    pack_uint16_at_offset(buffer, length_offset, total_length);
+
+    return offset;
+}
+
+int unpack_server_hello(
+    const char* buffer,
+    uint16_t& version,
+    char* random,
+    uint8_t& selected_suite
+) {
+    size_t offset = 0;
+
+    // Read total length from first 2 bytes (big-endian)
+    uint16_t total_length = (static_cast<uint16_t>(buffer[0]) << 8) |
+                            static_cast<uint16_t>(buffer[1]);
+    offset += 2;
+
+    // Read protocol version
+    version = (static_cast<uint16_t>(buffer[offset]) << 8) |
+                       static_cast<uint16_t>(buffer[offset + 1]);
+    offset += 2;
+
+    // Read random (32 bytes)
+    memcpy(random, buffer + offset, 32);
+    offset += 32;
+
+    selected_suite = static_cast<uint8_t>(buffer[offset]);
+    offset += 1;
+
+    return 0;
+}
+
+int unpack_client_hello(
+    const char* buffer,
+    uint16_t& protocol_version,
+    char* random,
+    std::vector<uint8_t>& cipher_suites
+) {
+    size_t offset = 0;
+
+    // Read total length from first 2 bytes (big-endian)
+    uint16_t total_length = (static_cast<uint16_t>(buffer[0])) |
+                            static_cast<uint16_t>(buffer[1]);
+    offset += 2;
+
+    // Read protocol version
+    protocol_version = (static_cast<uint16_t>(buffer[offset]) << 8) |
+                       static_cast<uint16_t>(buffer[offset + 1]);
+    offset += 2;
+
+    // Read random (32 bytes)
+    memcpy(random, buffer + offset, 32);
+    offset += 32;
+
+    // Read cipher suites
+    cipher_suites.clear();
+
+    // Read cipher suites length (2 bytes)
+    uint16_t cipher_suites_length = (static_cast<uint16_t>(buffer[offset]) << 8) |
+                                    static_cast<uint16_t>(buffer[offset + 1]);
+    offset += 2;
+
+    // Read individual cipher suites
+    for (size_t i = 0; i < cipher_suites_length; ++i) {
+        cipher_suites.push_back(static_cast<uint8_t>(buffer[offset + i]));
+    }
+
+    return 0;
+}
+
+void print_buffer_hex(char* buffer, size_t length) {
+    std::cout << std::hex << std::setfill('0');
+    for (size_t i = 0; i < length; ++i) {
+        std::cout << std::setw(2)
+                  << (int)(unsigned char)buffer[i] << " ";
+    }
+    std::cout << std::dec << std::endl;  // Reset to decimal
 }

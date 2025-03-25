@@ -25,6 +25,14 @@ class Ssl {
     char* data;
   };
 
+  // TLS versions
+  static const uint16_t TLS_1_2 = 0x0301;
+
+  // TLS ciphersuites
+  static const uint8_t TLS_RSA_WITH_AES_256_CBC_SHA_256 = 0x2F;
+  static const uint8_t TLS_DHE_WITH_AES_256_CBC_SHA_256 = 0x35;
+
+
   // record type
   static const uint8_t REC_CHANGE_CIPHER_SPEC = 0x14;
   static const uint8_t REC_ALERT              = 0x15;

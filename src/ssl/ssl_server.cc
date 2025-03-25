@@ -23,172 +23,206 @@
 using namespace std;
 
 SslServer::SslServer() {
-  string datetime;
-  if ( get_datetime(&datetime, "%Y%m%d-%H%M%S") != 0 ) {
-    exit(1);
-  }
-  this->logger_ = new Logger(("ssl_server_"+datetime+".log"));
-  this->tcp_->set_logger(this->logger_);
+    string datetime;
+    if (get_datetime(&datetime, "%Y%m%d-%H%M%S") != 0) {
+        exit(1);
+    }
+    this->logger_ = new Logger(("ssl_server_" + datetime + ".log"));
+    this->tcp_->set_logger(this->logger_);
 
-  get_datetime(&datetime, "%Y/%m/%d %H:%M:%S");
-  this->logger_->log("Server Log at " + datetime);
+    get_datetime(&datetime, "%Y/%m/%d %H:%M:%S");
+    this->logger_->log("Server Log at " + datetime);
 
-  this->closed_ = false;
+    this->closed_ = false;
 
-  // generate self-signed cert for every instance
-  string instance_name = "server_cert";
-  string private_key_file = instance_name + ".priv";
-  string public_key_file = instance_name + ".pub";
-  CryptoPP::RSA::PrivateKey cert_private_key;
-  CryptoPP::RSA::PublicKey cert_public_key;
-  generate_rsa_keys(cert_private_key, cert_public_key);
-  save_rsa_private_key(cert_private_key, private_key_file); // Update for multiple clients or servers
-  generate_self_signed_cert(private_key_file.c_str(), public_key_file.c_str());
+    // generate self-signed cert for every instance
+    string instance_name = "server_cert";
+    string private_key_file = instance_name + ".priv";
+    string public_key_file = instance_name + ".pub";
+    CryptoPP::RSA::PrivateKey cert_private_key;
+    CryptoPP::RSA::PublicKey cert_public_key;
+    generate_rsa_keys(cert_private_key, cert_public_key);
+    save_rsa_private_key(cert_private_key, private_key_file); // Update for multiple clients or servers
+    generate_self_signed_cert(private_key_file.c_str(), public_key_file.c_str());
 
-  if (!read_cert_file(cert_file_contents, public_key_file)) {
-    this->logger_->log("Failed to read certificate file");
-  }
+    if (!read_cert_file(cert_file_contents, public_key_file)) {
+        this->logger_->log("Failed to read certificate file");
+    }
 
-  // init dhe
-  // generate_pqg(this->dh_p_, this->dh_q_, this->dh_g_);
+    // init dhe
+    // generate_pqg(this->dh_p_, this->dh_q_, this->dh_g_);
 
-  // construct DH object for encryption
-  dh = DH_new();
-  if (!dh) handleErrors("Failed to create DH structure");
-  if (!DH_generate_parameters_ex(dh, 3072, DH_GENERATOR_2, nullptr))
-  handleErrors("Failed to generate DH parameters");
+    // construct DH object for encryption
+    // dh = DH_new();
+    // if (!dh) handleErrors("Failed to create DH structure");
+    // if (!DH_generate_parameters_ex(dh, 3072, DH_GENERATOR_2, nullptr))
+    // handleErrors("Failed to generate DH parameters");
+    //
+    // // grab DH parameters and keys
+    // if (!DH_generate_key(dh)) handleErrors("Failed to generate DH key pair");
+    // dh_pub_key = DH_get0_pub_key(dh);
+    // dh_priv_key = DH_get0_priv_key(dh);
+    //
+    // std::cout << "DH Public Key: " << BN_bn2hex(dh_pub_key) << std::endl;
+    // std::cout << "DH Private Key: " << BN_bn2hex(dh_priv_key) << std::endl;
 
-  // grab DH parameters and keys
-  if (!DH_generate_key(dh)) handleErrors("Failed to generate DH key pair");
-  dh_pub_key = DH_get0_pub_key(dh);
-  dh_priv_key = DH_get0_priv_key(dh);
-
-  std::cout << "DH Public Key: " << BN_bn2hex(dh_pub_key) << std::endl;
-  std::cout << "DH Private Key: " << BN_bn2hex(dh_priv_key) << std::endl;
-
-  // init rsa
-  generate_rsa_keys(this->private_key_, this->public_key_);
+    // init rsa
+    generate_rsa_keys(this->private_key_, this->public_key_);
 }
 
 SslServer::~SslServer() {
-  if ( !this->closed_ ) {
-    this->shutdown();
-  }
-  delete this->logger_;
+    if (!this->closed_) {
+        this->shutdown();
+    }
+    delete this->logger_;
 }
 
-void SslServer::handleErrors(const std::string& msg) {
-  std::cerr << "Error: " << msg << std::endl;
-  exit(EXIT_FAILURE);
+void SslServer::handleErrors(const std::string &msg) {
+    std::cerr << "Error: " << msg << std::endl;
+    exit(EXIT_FAILURE);
 }
 
 int SslServer::start(int num_clients) {
-  if ( this->closed_ ) {
-    return -1;
-  }
+    if (this->closed_) {
+        return -1;
+    }
 
-  return this->tcp_->socket_listen(num_clients);
+    return this->tcp_->socket_listen(num_clients);
 }
 
-Ssl* SslServer::accept() {
-  if ( this->closed_ ) {
-    return NULL;
-  }
+Ssl *SslServer::accept() {
+    if (this->closed_) {
+        return NULL;
+    }
 
-  cout << "Server accept" << endl;
+    cout << "Server accept" << endl;
 
-  TCP* cxn = this->tcp_->socket_accept();
-  if ( cxn == NULL ) {
-    cerr << "error when accepting" << endl;
-    return NULL;
-  }
+    TCP *cxn = this->tcp_->socket_accept();
+    if (cxn == NULL) {
+        cerr << "error when accepting" << endl;
+        return NULL;
+    }
 
-  cxn->set_logger(this->logger_);
+    cxn->set_logger(this->logger_);
 
-  Ssl* new_ssl_cxn = new Ssl(cxn);
-  this->clients_.push_back(new_ssl_cxn);
+    Ssl *new_ssl_cxn = new Ssl(cxn);
+    this->clients_.push_back(new_ssl_cxn);
 
-  // cout << "Connection build" << endl;
+    // cout << "Connection build" << endl;
 
-  // IMPLEMENT HANDSHAKE HERE
-  // Wait for Client Hello and print
-  char* client_random;
-  if(recv_client_hello(new_ssl_cxn, client_random) != 0) {
-    cerr << "Could not receive Client Hello" << endl;
-    return NULL;
-  }
-  cout << "Received Client Hello: " << client_random << endl;
+    // IMPLEMENT HANDSHAKE HERE
+    // Wait for Client Hello and print
+    char *client_hello;
+    if (recv_client_hello(new_ssl_cxn, client_hello) != 0) {
+        cerr << "Could not receive Client Hello" << endl;
+        return NULL;
+    }
+    uint16_t client_version;
+    char client_random[32];
+    std::vector<uint8_t> cipher_suites;
+    unpack_client_hello(client_hello, client_version, client_random, cipher_suites);
+    cout << "Client Random: " << client_random << endl;
+    cout << "Version: " << client_version << endl;
+    for (auto suite : cipher_suites) {
+        cout << "Cipher Suite: " << suite << endl;
+    }
 
-  char* server_random;
-  generate_random(server_random);
-  if(send_server_hello(new_ssl_cxn, server_random) != 0) {
-    cout << "Could not send Server Hello" << endl;
-    return NULL;
-  }
-  cout << "Sent Server Hello: " << server_random << endl;
 
-  if (send_cert(new_ssl_cxn, cert_file_contents) != 0) {
-    cerr << "Error sending certificate file" << endl;
-    return NULL;
-  }
+    // 2. Send server Hello
+    char *server_hello = (char *) malloc(1024);
+    char *server_random;
+    generate_random(server_random);
+    int server_hello_length = pack_server_hello(
+        server_hello,
+        client_version,
+        server_random,
+        TLS_DHE_WITH_AES_256_CBC_SHA_256 // Select cipher suite
+    );
+    if (send_server_hello(new_ssl_cxn, server_hello, server_hello_length) != 0) {
+        cout << "Could not send Server Hello" << endl;
+        return NULL;
+    }
+    cout << "Sent Server Hello: " << endl;
 
-  cout << "Sent certificate file: " << cert_file_contents << endl;
+    /**
+     * Server Key Exchange message contains params signed with private key
+     * key exchange params, signature
+     **/
 
-  // Send CertificateRequest
 
-  // Send ServerKeyExchange
+    /**
+     * Certificate request containing certificate types, signature algos,
+     * cert authorities
+     **/
 
-  // Send ServerHelloDone
 
-  // Handle RSA/DHE
-  // Handle handshake
-  // Handle key exchange
-  // Save key and key len
+    /**
+     *  Send Certificate
+     **/
+    if (send_cert(new_ssl_cxn, cert_file_contents) != 0) {
+        cerr << "Error sending certificate file" << endl;
+        return NULL;
+    }
+    cout << "Sent certificate file: " << endl;
 
-  free(client_random);
-  free(server_random);
-  free(cert_file_contents);
-  return new_ssl_cxn;
+
+    /**
+     *  Send SERVER_HELLO_DONE
+     **/
+    if (send_record(new_ssl_cxn, HS_SERVER_HELLO_DONE, VER_99, nullptr, 0) != 0) {
+        cerr << "Error sending server hello done" << endl;
+        return NULL;
+    }
+    cout << "Sent server hello done" << endl;
+
+    // Handle RSA/DHE
+    // Handle handshake
+    // Handle key exchange
+    // Save key and key len
+
+    free(server_hello);
+    free(server_random);
+    return new_ssl_cxn;
 }
 
 int SslServer::shutdown() {
-  if ( this->closed_ ) {
-    return -1;
-  }
-
-  // pop all clients
-  while ( !this->clients_.empty() ) {
-    Ssl* cxn = this->clients_.back();
-    this->clients_.pop_back();
-    if ( cxn != NULL ) {
-      delete cxn;
+    if (this->closed_) {
+        return -1;
     }
-  }
-  return 0;
+
+    // pop all clients
+    while (!this->clients_.empty()) {
+        Ssl *cxn = this->clients_.back();
+        this->clients_.pop_back();
+        if (cxn != NULL) {
+            delete cxn;
+        }
+    }
+    return 0;
 }
 
-vector<Ssl*> SslServer::get_clients() const {
-  return vector<Ssl*>(this->clients_);
+vector<Ssl *> SslServer::get_clients() const {
+    return vector<Ssl *>(this->clients_);
 }
 
 int SslServer::broadcast(const string &msg) {
-  if ( this->closed_ ) {
-    return -1;
-  }
-
-  int num_sent = 0;
-
-  // this->logger_->log("broadcast:");
-  // this->logger_->log_raw(msg);
-
-  for ( vector<Ssl*>::iterator it = this->clients_.begin() ;
-        it != this->clients_.end() ; ++it ) {
-    ssize_t send_len;
-    send_len = (*it)->send(msg);
-    if ( send_len == (unsigned int)msg.length() ) {
-      num_sent += 1;
+    if (this->closed_) {
+        return -1;
     }
-  }
 
-  return num_sent;
+    int num_sent = 0;
+
+    // this->logger_->log("broadcast:");
+    // this->logger_->log_raw(msg);
+
+    for (vector<Ssl *>::iterator it = this->clients_.begin();
+         it != this->clients_.end(); ++it) {
+        ssize_t send_len;
+        send_len = (*it)->send(msg);
+        if (send_len == (unsigned int) msg.length()) {
+            num_sent += 1;
+        }
+    }
+
+    return num_sent;
 }

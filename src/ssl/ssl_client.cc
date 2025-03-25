@@ -28,8 +28,6 @@ SslClient::SslClient() {
 
   get_datetime(&datetime, "%Y/%m/%d %H:%M:%S");
   this->logger_->log("Client Log at " + datetime);
-
-
 }
 
 SslClient::~SslClient() {
@@ -52,25 +50,55 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // 1. Sent Client Hello message
   char* client_random;
   generate_random(client_random);
-  if (send_client_hello(this, client_random) != 0) {
+  char* client_hello = (char*)malloc(1024);
+  std::vector<uint8_t> cipher_suites;
+  cipher_suites.push_back(0x2F);
+  cipher_suites.push_back(0x35);
+  int data_length = pack_client_hello(
+    client_hello,
+    Ssl::TLS_1_2,
+    client_random,
+    cipher_suites
+  );
+  if (send_client_hello(this, client_hello, data_length) != 0) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
   }
-  cout << "Sent Client Hello: " << client_random << endl;
+  cout << "Sent Client Hello: " << endl;
 
-  char* server_random;
-  if (recv_server_hello(this, server_random) != 0) {
+  char* server_hello;
+  if (recv_server_hello(this, server_hello) != 0) {
     cerr << "Couldn't receive Server Hello" << endl;
     return -1;
   }
-  cout << "Received Server Hello: " << server_random << endl;
+  cout << "Received Server Hello: " << endl;
+  uint16_t version;
+  char server_random[32];
+  uint8_t cipher_suite;
+  unpack_server_hello(server_hello, version, server_random, cipher_suite);
+  cout << "Server Version: " << version << endl;
+  cout << "Server Random: " << server_random << endl;
+  cout << "Server Cipher Suite: " << cipher_suite << endl;
 
   char* certificate;
   if (recv_cert(this, certificate) != 0) {
     cerr << "Couldn't receive Certificate" << endl;
     return -1;
   }
-  cout << "Received Certificate: " << certificate << endl;
+  cout << "Received Certificate: " << endl;
+
+
+  load_and_verify_certificate(certificate);
+  /**
+   * Verify certificate is not expired
+   * Ensure certificate is signed by the CA
+   * Maybe check Cert is not revoked
+   * certificate matches server domain
+   */
+  if (recv_server_hello_done(this, nullptr) != 0) {
+    cerr << "Couldn't receive Server Hello Done" << endl;
+  }
+  cout << "Received server hello done: " << endl;
 
   // Handle RSA/DHE
 
@@ -80,8 +108,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
 
   // Save key and key len
   
+  free(client_hello);
   free(client_random);
-  free(server_random);
   return 0;
 }
 
