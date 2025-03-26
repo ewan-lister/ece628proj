@@ -39,16 +39,13 @@ SslServer::SslServer() {
     string instance_name = "server_cert";
     string private_key_file = instance_name + ".priv";
     string public_key_file = instance_name + ".pub";
-    CryptoPP::RSA::PrivateKey cert_private_key;
-    CryptoPP::RSA::PublicKey cert_public_key;
-    generate_rsa_keys(cert_private_key, cert_public_key);
-    save_rsa_private_key(cert_private_key, private_key_file); // Update for multiple clients or servers
+    // init rsa
+    generate_rsa_keys(this->private_key_, this->public_key_);
+    save_rsa_private_key(this->private_key_, private_key_file); // Update for multiple clients or servers
     generate_self_signed_cert(private_key_file.c_str(), public_key_file.c_str());
-
     if (!read_cert_file(cert_file_contents, public_key_file)) {
         this->logger_->log("Failed to read certificate file");
     }
-
     // init dhe
     // generate_pqg(this->dh_p_, this->dh_q_, this->dh_g_);
 
@@ -65,9 +62,6 @@ SslServer::SslServer() {
     //
     // std::cout << "DH Public Key: " << BN_bn2hex(dh_pub_key) << std::endl;
     // std::cout << "DH Private Key: " << BN_bn2hex(dh_priv_key) << std::endl;
-
-    // init rsa
-    generate_rsa_keys(this->private_key_, this->public_key_);
 }
 
 SslServer::~SslServer() {
@@ -95,8 +89,6 @@ Ssl *SslServer::accept() {
         return NULL;
     }
 
-    cout << "Server accept" << endl;
-
     TCP *cxn = this->tcp_->socket_accept();
     if (cxn == NULL) {
         cerr << "error when accepting" << endl;
@@ -121,8 +113,8 @@ Ssl *SslServer::accept() {
     char client_random[32];
     std::vector<uint8_t> cipher_suites;
     unpack_client_hello(client_hello, client_version, client_random, cipher_suites);
-    cout << "Client Random: " << client_random << endl;
-    cout << "Version: " << client_version << endl;
+    // cout << "Client Random: " << client_random << endl;
+    // cout << "Version: " << client_version << endl;
     for (auto suite : cipher_suites) {
         cout << "Cipher Suite: " << suite << endl;
     }
@@ -132,17 +124,18 @@ Ssl *SslServer::accept() {
     char *server_hello = (char *) malloc(1024);
     char *server_random;
     generate_random(server_random);
+    // cout << "Server cipher suite: " << cipher_suites[0] << endl;
     int server_hello_length = pack_server_hello(
         server_hello,
         client_version,
         server_random,
-        TLS_DHE_WITH_AES_256_CBC_SHA_256 // Select cipher suite
+        cipher_suites[0] // Select first cipher suite
     );
     if (send_server_hello(new_ssl_cxn, server_hello, server_hello_length) != 0) {
         cout << "Could not send Server Hello" << endl;
         return NULL;
     }
-    cout << "Sent Server Hello: " << endl;
+    // cout << "Sent Server Hello: " << endl;
 
     /**
      * Server Key Exchange message contains params signed with private key
@@ -159,11 +152,13 @@ Ssl *SslServer::accept() {
     /**
      *  Send Certificate
      **/
+    CryptoPP::RSA::PublicKey cert_public_key;
+    load_and_verify_certificate(cert_file_contents, cert_public_key);
     if (send_cert(new_ssl_cxn, cert_file_contents) != 0) {
         cerr << "Error sending certificate file" << endl;
         return NULL;
     }
-    cout << "Sent certificate file: " << endl;
+    // cout << "Sent certificate file: " << endl;
 
 
     /**
@@ -173,7 +168,26 @@ Ssl *SslServer::accept() {
         cerr << "Error sending server hello done" << endl;
         return NULL;
     }
-    cout << "Sent server hello done" << endl;
+    // cout << "Sent server hello done" << endl;
+
+    /**
+     * Receive CLIENT_KEY_EXCHANGE
+     **/
+    char *client_key_exchange;
+    // cout << "Waiting for client key exchange" << endl;
+    if (recv_client_key_exchange(new_ssl_cxn, client_key_exchange)) {
+        cerr << "Error receiving client key exchange" << endl;
+        return NULL;
+    }
+
+    char* encrypted_premaster_secret = (char*)malloc(1024*(sizeof(char)));
+    int len = unpack_client_key_exchange(client_key_exchange, encrypted_premaster_secret);
+    // cout << "Server's encrypted premaster secret " << encrypted_premaster_secret << endl;
+    string premaster_secret;
+    string encrypted_premaster_secret_str(encrypted_premaster_secret, len);
+    // printRSAPublicKey(this->public_key_);
+    rsa_decrypt(this->private_key_, &premaster_secret, encrypted_premaster_secret_str);
+    cout << "Server premaster Secret: " << premaster_secret << endl;
 
     // Handle RSA/DHE
     // Handle handshake
@@ -182,6 +196,7 @@ Ssl *SslServer::accept() {
 
     free(server_hello);
     free(server_random);
+    free(client_key_exchange);
     return new_ssl_cxn;
 }
 

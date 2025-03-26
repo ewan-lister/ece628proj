@@ -1,6 +1,8 @@
 #include "crypto_adaptor.h"
 
 #include <iostream>
+#include <openssl/bn.h>
+#include <vector>
 
 #include "integer.h"
 #include "modes.h"
@@ -9,6 +11,9 @@
 
 using namespace std;
 using namespace CryptoPP;
+
+static const size_t RSA_KEY_LENGTH = 3072;
+
 
 int generate_pqg(Integer &p, Integer &q, Integer &g) {
   // 256*4 bit = 1024 bits
@@ -31,11 +36,11 @@ int generate_pqg(Integer &p, Integer &q, Integer &g) {
   return 0;
 }
 
-int generate_rsa_keys(RSA::PrivateKey &private_key, RSA::PublicKey &public_key) {
+int generate_rsa_keys(CryptoPP::RSA::PrivateKey &private_key, CryptoPP::RSA::PublicKey &public_key) {
   AutoSeededRandomPool rnd;
-  RSA::PrivateKey rsa_private_key;
-  rsa_private_key.GenerateRandomWithKeySize(rnd, 3072);
-  RSA::PublicKey rsa_public_key(rsa_private_key);
+  CryptoPP::RSA::PrivateKey rsa_private_key;
+  rsa_private_key.GenerateRandomWithKeySize(rnd, RSA_KEY_LENGTH);
+  CryptoPP::RSA::PublicKey rsa_public_key(rsa_private_key);
 
   private_key = rsa_private_key;
   public_key = rsa_public_key;
@@ -94,23 +99,36 @@ int aes_decrypt(const unsigned char* key, size_t key_len,
   return 0;
 }
 
-int rsa_encrypt(const RSA::PublicKey &pub_key,
+int rsa_encrypt(const CryptoPP::RSA::PublicKey &pub_key,
                 std::string *cipher_text, const std::string &plain_text) {
 
   AutoSeededRandomPool rng;
+  const size_t BLOCK_SIZE = (RSA_KEY_LENGTH / 8) - 42;
 
   try {
-    RSAES_OAEP_SHA_Encryptor encryptor(pub_key);
-    
-    StringSource ss1(
-      plain_text,
-      true,
-      new PK_EncryptorFilter(
-        rng,
-        encryptor,
-        new StringSink(*cipher_text)
-      )
-    );
+    cipher_text->clear(); // Ensure the output is empty
+
+    // Iterate through the plaintext in blocks
+    for (size_t offset = 0; offset < plain_text.length(); offset += BLOCK_SIZE) {
+      // Extract a block (or remaining bytes if less than BLOCK_SIZE)
+      std::string block = plain_text.substr(offset, BLOCK_SIZE);
+
+      std::string encrypted_block;
+      RSAES_OAEP_SHA_Encryptor encryptor(pub_key);
+
+      StringSource ss(
+        block,
+        true,
+        new PK_EncryptorFilter(
+          rng,
+          encryptor,
+          new StringSink(encrypted_block)
+        )
+      );
+
+      // Append the encrypted block to the final cipher text
+      *cipher_text += encrypted_block;
+    }
 
   } catch(const CryptoPP::Exception &e) {
     cerr << e.what() << endl;
@@ -120,23 +138,36 @@ int rsa_encrypt(const RSA::PublicKey &pub_key,
   return 0;
 }
 
-int rsa_decrypt(const RSA::PrivateKey &priv_key,
+int rsa_decrypt(const CryptoPP::RSA::PrivateKey &priv_key,
                 std::string *plain_text, const std::string &cipher_text) {
 
   AutoSeededRandomPool rng;
+  size_t BLOCK_SIZE = RSA_KEY_LENGTH / 8;
 
   try {
-    RSAES_OAEP_SHA_Decryptor decryptor(priv_key);
+    plain_text->clear(); // Ensure the output is empty
 
-    StringSource ss(
-      cipher_text,
-      true,
-      new PK_DecryptorFilter(
-        rng,
-        decryptor,
-        new StringSink(*plain_text)
-      )
-    );
+    // Iterate through the cipher text in blocks
+    for (size_t offset = 0; offset < cipher_text.length(); offset += BLOCK_SIZE) {
+      // Extract a block (or remaining bytes if less than BLOCK_SIZE)
+      std::string block = cipher_text.substr(offset, BLOCK_SIZE);
+
+      std::string decrypted_block;
+      RSAES_OAEP_SHA_Decryptor decryptor(priv_key);
+
+      StringSource ss(
+        block,
+        true,
+        new PK_DecryptorFilter(
+          rng,
+          decryptor,
+          new StringSink(decrypted_block)
+        )
+      );
+
+      // Append the decrypted block to the final plain text
+      *plain_text += decrypted_block;
+    }
 
   } catch(const CryptoPP::Exception &e) {
     cerr << e.what() << endl;
@@ -144,4 +175,23 @@ int rsa_decrypt(const RSA::PrivateKey &priv_key,
   }
 
   return 0;
+
+}
+
+CryptoPP::Integer convert_bignum_to_integer(BIGNUM* bn) {
+  if (!bn) {
+    throw std::runtime_error("Null BIGNUM pointer");
+  }
+
+  // Get the number of bytes required to represent the BIGNUM
+  int bn_bytes = BN_num_bytes(bn);
+
+  // Allocate buffer
+  std::vector<unsigned char> buffer(bn_bytes);
+
+  // Convert BIGNUM to byte array
+  BN_bn2bin(bn, buffer.data());
+
+  // Construct Crypto++ Integer from byte array
+  return CryptoPP::Integer(buffer.data(), buffer.size());
 }

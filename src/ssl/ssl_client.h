@@ -2,6 +2,7 @@
 #define SSL_CLIENT_H
 
 #include "ssl.h"
+#include "rsa.h"
 
 #include <sys/types.h>
 

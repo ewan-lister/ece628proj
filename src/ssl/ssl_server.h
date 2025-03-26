@@ -17,6 +17,7 @@ class SslServer: public Ssl {
   virtual ~SslServer();
 
   virtual int start(int num_clients=1000);
+
   virtual Ssl* accept(); // blocking call
   virtual int shutdown();
 

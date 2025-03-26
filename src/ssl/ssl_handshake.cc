@@ -22,7 +22,9 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
+#include <openssl/rsa.h>
 
+#include "crypto_adaptor.h"
 #include "ssl_client.h"
 #include "ssl.h"
 
@@ -30,39 +32,133 @@ using namespace std;
 
 const char* HOSTNAME = "localhost";
 
+// Key exchange constants
+static const size_t PREMASTER_SECRET_LENGTH = 48;
+static const size_t RSA_KEY_LENGTH = 3072;
+
+
 void save_rsa_private_key(CryptoPP::RSA::PrivateKey private_key, std::string private_key_file) {
-    // Get key size from Crypto++ key
-    unsigned int keySize = private_key.GetModulus().BitCount();
+    try {
+        // Extract all components from the Crypto++ private key
+        const CryptoPP::Integer& n = private_key.GetModulus();
+        const CryptoPP::Integer& e = private_key.GetPublicExponent();
+        const CryptoPP::Integer& d = private_key.GetPrivateExponent();
+        const CryptoPP::Integer& p = private_key.GetPrime1();
+        const CryptoPP::Integer& q = private_key.GetPrime2();
+        CryptoPP::Integer dmp1 = d % (p-1);
+        CryptoPP::Integer dmq1 = d % (q-1);
+        CryptoPP::Integer iqmp = private_key.GetMultiplicativeInverseOfPrime2ModPrime1();
 
-    // Generate a new OpenSSL key with the same size
-    RSA* rsa = RSA_new();
-    BIGNUM* e = BN_new();
-    BN_set_word(e, 65537); // Standard public exponent
+        // Convert Crypto++ Integers to OpenSSL BIGNUMs
+        BIGNUM *bn_n = BN_new();
+        BIGNUM *bn_e = BN_new();
+        BIGNUM *bn_d = BN_new();
+        BIGNUM *bn_p = BN_new();
+        BIGNUM *bn_q = BN_new();
+        BIGNUM *bn_dmp1 = BN_new();
+        BIGNUM *bn_dmq1 = BN_new();
+        BIGNUM *bn_iqmp = BN_new();
 
-    // Generate key with same bit length
-    if (RSA_generate_key_ex(rsa, keySize, e, NULL) != 1) {
-        std::cerr << "Failed to generate RSA key" << std::endl;
-        BN_free(e);
-        RSA_free(rsa);
-        return;
+        if (!bn_n || !bn_e || !bn_d || !bn_p || !bn_q || !bn_dmp1 || !bn_dmq1 || !bn_iqmp) {
+            std::cerr << "Error allocating BIGNUMs" << std::endl;
+            return;
+        }
+
+        // Convert each component from Crypto++ Integer to OpenSSL BIGNUM
+        unsigned char* n_bytes = new unsigned char[n.ByteCount()];
+        unsigned char* e_bytes = new unsigned char[e.ByteCount()];
+        unsigned char* d_bytes = new unsigned char[d.ByteCount()];
+        unsigned char* p_bytes = new unsigned char[p.ByteCount()];
+        unsigned char* q_bytes = new unsigned char[q.ByteCount()];
+        unsigned char* dmp1_bytes = new unsigned char[dmp1.ByteCount()];
+        unsigned char* dmq1_bytes = new unsigned char[dmq1.ByteCount()];
+        unsigned char* iqmp_bytes = new unsigned char[iqmp.ByteCount()];
+
+        // Encode integers to bytes
+        n.Encode(n_bytes, n.ByteCount());
+        e.Encode(e_bytes, e.ByteCount());
+        d.Encode(d_bytes, d.ByteCount());
+        p.Encode(p_bytes, p.ByteCount());
+        q.Encode(q_bytes, q.ByteCount());
+        dmp1.Encode(dmp1_bytes, dmp1.ByteCount());
+        dmq1.Encode(dmq1_bytes, dmq1.ByteCount());
+        iqmp.Encode(iqmp_bytes, iqmp.ByteCount());
+
+        // Convert bytes to BIGNUMs
+        BN_bin2bn(n_bytes, n.ByteCount(), bn_n);
+        BN_bin2bn(e_bytes, e.ByteCount(), bn_e);
+        BN_bin2bn(d_bytes, d.ByteCount(), bn_d);
+        BN_bin2bn(p_bytes, p.ByteCount(), bn_p);
+        BN_bin2bn(q_bytes, q.ByteCount(), bn_q);
+        BN_bin2bn(dmp1_bytes, dmp1.ByteCount(), bn_dmp1);
+        BN_bin2bn(dmq1_bytes, dmq1.ByteCount(), bn_dmq1);
+        BN_bin2bn(iqmp_bytes, iqmp.ByteCount(), bn_iqmp);
+
+        // Clean up byte arrays
+        delete[] n_bytes;
+        delete[] e_bytes;
+        delete[] d_bytes;
+        delete[] p_bytes;
+        delete[] q_bytes;
+        delete[] dmp1_bytes;
+        delete[] dmq1_bytes;
+        delete[] iqmp_bytes;
+
+        // Create new RSA structure and set its components
+        RSA* rsa = RSA_new();
+        if (!rsa) {
+            std::cerr << "Error creating RSA structure" << std::endl;
+            return;
+        }
+
+        // Assign key components - these functions transfer ownership of the BIGNUMs to the RSA structure
+        if (RSA_set0_key(rsa, bn_n, bn_e, bn_d) != 1) {
+            std::cerr << "Error setting RSA key components" << std::endl;
+            RSA_free(rsa);
+            return;
+        }
+
+        if (RSA_set0_factors(rsa, bn_p, bn_q) != 1) {
+            std::cerr << "Error setting RSA factors" << std::endl;
+            RSA_free(rsa);
+            return;
+        }
+
+        if (RSA_set0_crt_params(rsa, bn_dmp1, bn_dmq1, bn_iqmp) != 1) {
+            std::cerr << "Error setting RSA CRT parameters" << std::endl;
+            RSA_free(rsa);
+            return;
+        }
+
+        // Create EVP_PKEY and assign RSA to it
+        EVP_PKEY* pkey = EVP_PKEY_new();
+        if (!pkey || EVP_PKEY_assign_RSA(pkey, rsa) != 1) {
+            std::cerr << "Error creating EVP_PKEY" << std::endl;
+            RSA_free(rsa);
+            if (pkey) EVP_PKEY_free(pkey);
+            return;
+        }
+
+        // Write the key to file in PEM format
+        FILE* fp = fopen(private_key_file.c_str(), "wb");
+        if (fp) {
+            if (PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL) != 1) {
+                std::cerr << "Error writing private key to file" << std::endl;
+            }
+            fclose(fp);
+        } else {
+            std::cerr << "Failed to open file for writing private key: " << private_key_file << std::endl;
+        }
+
+        // Clean up
+        EVP_PKEY_free(pkey); // This also frees the RSA structure
     }
-
-    // Create EVP_PKEY structure
-    EVP_PKEY* pkey = EVP_PKEY_new();
-    EVP_PKEY_assign_RSA(pkey, rsa); // pkey now owns rsa
-
-    // Write to file in PEM format
-    FILE* fp = fopen(private_key_file.c_str(), "wb");
-    if (fp) {
-        PEM_write_PrivateKey(fp, pkey, NULL, NULL, 0, NULL, NULL);
-        fclose(fp);
-    } else {
-        std::cerr << "Failed to open file for writing private key" << std::endl;
+    catch (const CryptoPP::Exception& e) {
+        std::cerr << "Crypto++ exception: " << e.what() << std::endl;
     }
-
-    // Clean up
-    BN_free(e);
-    EVP_PKEY_free(pkey); // This also frees the RSA structure
+    catch (const std::exception& e) {
+        std::cerr << "Standard exception: " << e.what() << std::endl;
+    }
 }
 
 // Function to load Crypto++ RSA key into OpenSSL EVP_PKEY format
@@ -75,6 +171,11 @@ EVP_PKEY* load_crypto_rsa_key(const std::string& privKeyFile) {
 
     EVP_PKEY* pkey = PEM_read_PrivateKey(file, nullptr, nullptr, nullptr);
     fclose(file);
+
+    if (!pkey) {
+        std::cerr << "Error reading PEM private key" << std::endl;
+        return nullptr;
+    }
 
     return pkey;
 }
@@ -231,29 +332,43 @@ int recv_data(Ssl* cnx, char*& data,const uint8_t type,const uint16_t version) {
     }
 
     data = (char*)malloc(recv_record.hdr.length);
-    cout << "Received data of length " << recv_record.hdr.length << endl;
+    // cout << "Received data of length " << recv_record.hdr.length << endl;
     memcpy(data, recv_record.data, recv_record.hdr.length);
 
     return 0;
 }
 
+int recv_client_key_exchange(Ssl* cnx, char*& data) {
+    // cout << "Received client key exchange" << endl;
+    return recv_data(cnx, data, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99);
+}
+
 int recv_server_hello(Ssl* cnx, char*& data) {
+    // cout << "Received server hello" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
 }
 
+int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
+    // cout << "Sending client key exchange. len: " << length << endl;
+    return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
+}
+
 int recv_client_hello(Ssl* cnx, char*& data) {
+    // cout << "Received client hello" << endl;
     return recv_data(cnx, data, Ssl::HS_CLIENT_HELLO, Ssl::VER_99);
 }
 
 int recv_cert(Ssl* cnx, char*& data) {
+    // cout << "Received certificate" << endl;
     return recv_data(cnx, data, Ssl::HS_CERTIFICATE, Ssl::VER_99);
 }
 
 int recv_server_hello_done(Ssl* cnx, char* data) {
+    // cout << "Received server hello done" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO_DONE, Ssl::VER_99);
 }
 
-int load_and_verify_certificate(char *&certificate) {
+int load_and_verify_certificate(char *&certificate, CryptoPP::RSA::PublicKey& cryptopp_key) {
     // Initialize OpenSSL
     OpenSSL_add_all_algorithms();
     ERR_load_crypto_strings();
@@ -263,6 +378,10 @@ int load_and_verify_certificate(char *&certificate) {
     X509_STORE* store = nullptr;
     X509_STORE_CTX* ctx = nullptr;
     BIO* cert_bio = nullptr;
+    EVP_PKEY* pkey = nullptr;
+    RSA* rsa = nullptr;
+    BIGNUM *n = nullptr;
+    BIGNUM *e = nullptr;
 
     // Create a BIO for the PEM certificate string
     cert_bio = BIO_new_mem_buf(certificate, -1);
@@ -330,8 +449,28 @@ int load_and_verify_certificate(char *&certificate) {
     //     goto cleanup;
     // }
 
+    // Extract public key
+    pkey = X509_get_pubkey(cert);
+    if (!pkey) {
+        X509_free(cert);
+        throw std::runtime_error("Cannot extract public key");
+    }
+
+    // Extract RSA key parameters
+    EVP_PKEY_get_bn_param(pkey, "n", &n);    // Modulus
+    EVP_PKEY_get_bn_param(pkey, "e", &e);    // Public Exponent
+
+    if (!n || !e) {
+        cerr << "Error extracting RSA key parameters" << endl;
+        goto cleanup;
+    }
+
+    // Convert OpenSSL BIGNUM to Crypto++ Integer
+    cryptopp_key.SetModulus(convert_bignum_to_integer(n));
+    cryptopp_key.SetPublicExponent(convert_bignum_to_integer(e));
+
     // All verification steps passed successfully
-    std::cout << "Certificate verified successfully!" << std::endl;
+    // std::cout << "Certificate verified successfully!" << std::endl;
     result = 0;
 
 cleanup:
@@ -371,9 +510,35 @@ size_t unpack_uint16(const char* buffer, size_t offset, uint16_t& value) {
     return offset + 2;
 }
 
-static size_t pack_bytes(char* buffer, size_t offset, char* data, size_t length) {
+static size_t pack_bytes(char* buffer, size_t offset, const char* data, size_t length) {
     std::memcpy(buffer + offset, data, length);
     return offset + length;
+}
+
+int pack_client_key_exchange(char*& buffer, const char* data, size_t length) {
+    size_t offset = 0;
+
+    offset = pack_uint16_at_offset(buffer, offset, (uint16_t) length);
+    offset = pack_bytes(buffer, offset, data, length);
+
+    cout << "Client key exchange length: " << offset << endl;
+    return offset;
+}
+
+int unpack_client_key_exchange(char* buffer, char*& data) {
+    size_t offset = 0;
+
+    // Read total length from first 2 bytes (big-endian)
+    uint16_t total_length = (static_cast<uint16_t>(buffer[offset]) << 8 & 0xFFFF) |
+                       static_cast<uint16_t>(buffer[offset + 1] & 0xFF);
+    // cout << "Server Client key exchange length: " << total_length << endl;
+    offset += 2;
+
+    data = (char*)malloc(total_length*sizeof(char));
+    memcpy(data, buffer + offset, total_length);
+    offset += total_length;
+
+    return total_length;
 }
 
 
@@ -516,4 +681,40 @@ void print_buffer_hex(char* buffer, size_t length) {
                   << (int)(unsigned char)buffer[i] << " ";
     }
     std::cout << std::dec << std::endl;  // Reset to decimal
+}
+
+int generate_premaster_secret(string& premaster_secret) {
+    CryptoPP::AutoSeededRandomPool rng;
+    premaster_secret.clear();
+
+    try {
+        byte buffer[PREMASTER_SECRET_LENGTH];
+
+        rng.GenerateBlock(buffer, PREMASTER_SECRET_LENGTH);
+
+        // The first 2 bytes should be the client's version (typically 0x03, 0x03 for TLS 1.2)
+        buffer[0] = 0x01;  // Major version
+        buffer[1] = 0x02;  // Minor version
+
+        // Convert the buffer to a string
+        premaster_secret.assign((const char*)buffer, PREMASTER_SECRET_LENGTH);
+
+        return 0;
+    } catch(const CryptoPP::Exception& e) {
+        cerr << "Error generating premaster secret: " << e.what() << endl;
+        return -1;
+    }
+}
+
+void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key) {
+    std::cout << "RSA Public Key Details:" << std::endl;
+
+    // Print the modulus (n)
+    std::cout << "Modulus (n): " << key.GetModulus() << std::endl;
+
+    // Print the public exponent (e)
+    std::cout << "Public Exponent (e): " << key.GetPublicExponent() << std::endl;
+
+    // Print the key bit length
+    std::cout << "Key Size: " << key.GetModulus().BitCount() << " bits" << std::endl;
 }

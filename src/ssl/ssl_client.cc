@@ -8,6 +8,7 @@
 #include "dh.h"
 #include "integer.h"
 #include "osrng.h"
+#include "rsa.h"
 #include "ssl.h"
 
 #include "tcp.h"
@@ -39,7 +40,6 @@ SslClient::~SslClient() {
 }
 
 int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
-
   // connect
   if ( this->tcp_->socket_connect(ip, port) != 0 ) {
     cerr << "Couldn't connect" << endl;
@@ -52,8 +52,15 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   generate_random(client_random);
   char* client_hello = (char*)malloc(1024);
   std::vector<uint8_t> cipher_suites;
-  cipher_suites.push_back(0x2F);
-  cipher_suites.push_back(0x35);
+
+  if (cxntype == Ssl::KE_DHE) {
+    cipher_suites.push_back(0x35);
+  } else if (cxntype == Ssl::KE_RSA) {
+    cipher_suites.push_back(0x2F);
+  } else {
+    cerr << "Invalid connection type" << endl;
+    return -1;
+  }
   int data_length = pack_client_hello(
     client_hello,
     Ssl::TLS_1_2,
@@ -64,31 +71,32 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
   }
-  cout << "Sent Client Hello: " << endl;
+//  cout << "Sent Client Hello: " << endl;
 
   char* server_hello;
   if (recv_server_hello(this, server_hello) != 0) {
     cerr << "Couldn't receive Server Hello" << endl;
     return -1;
   }
-  cout << "Received Server Hello: " << endl;
+//  cout << "Received Server Hello: " << endl;
   uint16_t version;
   char server_random[32];
   uint8_t cipher_suite;
   unpack_server_hello(server_hello, version, server_random, cipher_suite);
-  cout << "Server Version: " << version << endl;
-  cout << "Server Random: " << server_random << endl;
-  cout << "Server Cipher Suite: " << cipher_suite << endl;
+//  cout << "Server Version: " << version << endl;
+//  cout << "Server Random: " << server_random << endl;
+//  cout << "Server Cipher Suite: " << cipher_suite << endl;
 
   char* certificate;
   if (recv_cert(this, certificate) != 0) {
     cerr << "Couldn't receive Certificate" << endl;
     return -1;
   }
-  cout << "Received Certificate: " << endl;
+  //  cout << "Received Certificate: " << endl;
 
-
-  load_and_verify_certificate(certificate);
+  // Convert to Crypto++ key
+  CryptoPP::RSA::PublicKey cryptoPPKey;
+  load_and_verify_certificate(certificate, cryptoPPKey);
   /**
    * Verify certificate is not expired
    * Ensure certificate is signed by the CA
@@ -98,7 +106,28 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   if (recv_server_hello_done(this, nullptr) != 0) {
     cerr << "Couldn't receive Server Hello Done" << endl;
   }
-  cout << "Received server hello done: " << endl;
+//  cout << "Received server hello done: " << endl;
+
+  string premaster_secret;
+  string encrypted_premaster_secret;
+  generate_premaster_secret(premaster_secret);
+  cout << "Client Premaster Secret: " << premaster_secret << endl;
+  cout << "Client Premaster Secret length: " << premaster_secret.length() << endl;
+//  printRSAPublicKey(cryptoPPKey);
+  if (rsa_encrypt(cryptoPPKey, &encrypted_premaster_secret, premaster_secret) != 0) {
+    cerr << "Couldn't encrypt premaster secret" << endl;
+    return -1;
+  }
+//  cout << "Client Encrypted Premaster Secret: " << encrypted_premaster_secret << endl;
+//  cout << "Client Encrypted Premaster Secret length: " << encrypted_premaster_secret.length() << endl;
+  char* client_key_exchange = (char*)malloc(1024*(sizeof(char)));
+  int len = pack_client_key_exchange(client_key_exchange, encrypted_premaster_secret.c_str(), encrypted_premaster_secret.length());
+  //  cout << "Client key exchange length: " << len << endl;
+  //  cout << "Client Key Exchange: " << client_key_exchange << endl;
+  if (send_client_key_exchange(this, client_key_exchange, len) != 0) {
+    cerr << "Couldn't send Client Key Exchange" << endl;
+  }
+  //  cout << "Sent Client Key Exchange: " << endl;
 
   // Handle RSA/DHE
 
@@ -110,6 +139,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   
   free(client_hello);
   free(client_random);
+  free(client_key_exchange);
   return 0;
 }
 

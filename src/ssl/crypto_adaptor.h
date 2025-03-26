@@ -1,6 +1,8 @@
 #ifndef CRYPTO_ADAPTOR_H
 #define CRYPTO_ADAPTOR_H
 
+#include <openssl/bn.h>
+
 #include "string.h"
 
 #include "integer.h"
@@ -28,7 +30,7 @@ int rsa_encrypt(const CryptoPP::RSA::PublicKey &pub_key,
 int rsa_decrypt(const CryptoPP::RSA::PrivateKey &priv_key,
                 std::string *plain_text, const std::string &cipher_text);
 
-
+CryptoPP::Integer convert_bignum_to_integer(BIGNUM* bn);
 
 #endif // CRYPTO_ADAPTOR_H
 
