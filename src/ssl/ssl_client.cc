@@ -111,8 +111,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   string premaster_secret;
   string encrypted_premaster_secret;
   generate_premaster_secret(premaster_secret);
-  cout << "Client Premaster Secret: " << premaster_secret << endl;
-  cout << "Client Premaster Secret length: " << premaster_secret.length() << endl;
+//  cout << "Client Premaster Secret: " << premaster_secret << endl;
+//  cout << "Client Premaster Secret length: " << premaster_secret.length() << endl;
 //  printRSAPublicKey(cryptoPPKey);
   if (rsa_encrypt(cryptoPPKey, &encrypted_premaster_secret, premaster_secret) != 0) {
     cerr << "Couldn't encrypt premaster secret" << endl;
@@ -127,7 +127,36 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   if (send_client_key_exchange(this, client_key_exchange, len) != 0) {
     cerr << "Couldn't send Client Key Exchange" << endl;
   }
-  //  cout << "Sent Client Key Exchange: " << endl;
+
+  CryptoPP::SecByteBlock premaster_secret_block(
+        reinterpret_cast<const byte*>(premaster_secret.c_str()), 48);
+    CryptoPP::SecByteBlock server_random_block(
+            reinterpret_cast<const byte*>(server_random), 32);
+    CryptoPP::SecByteBlock client_random_block(
+            reinterpret_cast<const byte*>(client_random), 32);
+
+    // Buffers for generated keys
+    CryptoPP::SecByteBlock master_secret;
+    CryptoPP::SecByteBlock client_write_key;
+    CryptoPP::SecByteBlock server_write_key;
+    CryptoPP::SecByteBlock client_write_iv;
+    CryptoPP::SecByteBlock server_write_iv;
+    if (TLS12_KDF_AES256(
+        premaster_secret_block, client_random_block, server_random_block,
+        master_secret, client_write_key, server_write_key,
+        client_write_iv, server_write_iv
+        ) != 0) {
+        cout << "Error generating keys" << endl;
+        return NULL;
+    }
+    this->set_shared_key(client_write_key.data(), client_write_key.size());
+
+   // cout << "Client master secret: " << FormatKeyData(master_secret) << endl;
+   // cout << "Server write key: " << FormatKeyData(server_write_key) << endl;
+   // cout << "Server write iv: " << FormatKeyData(server_write_iv) << endl;
+   // cout << "Client write key: " << FormatKeyData(client_write_key) << endl;
+   // cout << "Client write iv: " << FormatKeyData(client_write_iv) << endl;
+   // cout << "Sent Client Key Exchange: " << endl;
 
   // Handle RSA/DHE
 

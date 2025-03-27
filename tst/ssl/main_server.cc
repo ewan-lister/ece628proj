@@ -58,35 +58,35 @@ int main() {
 
     cout << "s: accepted " << i+1 << " client(s)" << endl;
 
-    // int retcode;
-    // retcode = pthread_create(&threads[i], NULL, handle_client, (void *)client);
-    // if ( retcode != 0 ) {
-    //   perror("Error: can't create thread.\n");
-    //   exit(1);
-    // }
+     int retcode;
+     retcode = pthread_create(&threads[i], NULL, handle_client, (void *)client);
+     if ( retcode != 0 ) {
+       perror("Error: can't create thread.\n");
+       exit(1);
+     }
   }
-  // cout << "c" << endl;
+   cout << "c" << endl;
 
-  // void* status;
-  // for( int i = 0 ; i < NUM_THREADS ; i += 1 ) {
-  //   int retcode;
+   void* status;
+   for( int i = 0 ; i < NUM_THREADS ; i += 1 ) {
+     int retcode;
 
-  //   retcode = pthread_join(threads[i], &status);
-  //   if (retcode){
-  //     cerr << "Error:unable to join," << retcode << endl;
-  //     exit(1);
-  //   }
+     retcode = pthread_join(threads[i], &status);
+     if (retcode){
+       cerr << "Error:unable to join," << retcode << endl;
+       exit(1);
+     }
 
-  //   // cout << "Main: completed thread id :" << i ;
-  //   // cout << "  exiting with status :" << status << endl;
-  // }
+     // cout << "Main: completed thread id :" << i ;
+     // cout << "  exiting with status :" << status << endl;
+   }
 
-  // cout << "s: broadcasting " << endl;
+   cout << "s: broadcasting " << endl;
 
-  // if ( s->broadcast("Server says \"HELLO ALL\"") < 0 ) {
-  //   cerr << "Error: couldn't broadcast" << endl;
-  //   exit(1);
-  // }
+   if ( s->broadcast("Server says \"HELLO ALL\"") < 0 ) {
+     cerr << "Error: couldn't broadcast" << endl;
+     exit(1);
+   }
 
   cout << "s: shutting down " << endl;
 

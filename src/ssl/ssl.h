@@ -84,8 +84,11 @@ class Ssl {
  protected:
   TCP* tcp_;
   Logger* logger_;
+
   unsigned char* shared_key_;
   size_t shared_key_len_;
+  unsigned char* shared_read_key_;
+  size_t shared_read_key_len_;
 };
 
 

@@ -3,11 +3,16 @@
 #include <iostream>
 #include <openssl/bn.h>
 #include <vector>
+#include <string>
 
 #include "integer.h"
 #include "modes.h"
 #include "rsa.h"
 #include "osrng.h"
+#include "sha.h"
+#include "hmac.h"
+#include "secblock.h"
+#include "hex.h"
 
 using namespace std;
 using namespace CryptoPP;
@@ -195,3 +200,132 @@ CryptoPP::Integer convert_bignum_to_integer(BIGNUM* bn) {
   // Construct Crypto++ Integer from byte array
   return CryptoPP::Integer(buffer.data(), buffer.size());
 }
+
+// TLS 1.2 PRF (Pseudorandom Function) using HMAC-SHA256
+void TLS12_PRF(
+    const CryptoPP::SecByteBlock& secret,
+    const std::string& label,
+    const CryptoPP::SecByteBlock& seed,
+    CryptoPP::SecByteBlock& output,
+    size_t output_length
+) {
+    // Create the actual seed (label + seed)
+    CryptoPP::SecByteBlock actual_seed(label.size() + seed.size());
+    memcpy(actual_seed, label.data(), label.size());
+    memcpy(actual_seed + label.size(), seed.data(), seed.size());
+
+    // A(0) = seed, A(i) = HMAC(secret, A(i-1))
+    CryptoPP::SecByteBlock A(actual_seed);
+    CryptoPP::SecByteBlock hmac_output;
+
+    // Initialize the output buffer
+    output.resize(output_length);
+    size_t bytes_generated = 0;
+
+    // Create HMAC with SHA-256
+    CryptoPP::HMAC<CryptoPP::SHA256> hmac(secret, secret.size());
+
+    while (bytes_generated < output_length) {
+        // Calculate A(i)
+        hmac.Update(A.data(), A.size());
+        A.resize(hmac.DigestSize());
+        hmac.Final(A);
+
+        // Calculate HMAC(secret, A(i) + seed)
+        hmac.Update(A.data(), A.size());
+        hmac.Update(actual_seed.data(), actual_seed.size());
+
+        CryptoPP::SecByteBlock hmac_result(hmac.DigestSize());
+        hmac.Final(hmac_result);
+
+        // Copy as much as needed to the output
+        size_t copy_size = std::min(output_length - bytes_generated, hmac_result.size());
+        memcpy(output + bytes_generated, hmac_result.data(), copy_size);
+        bytes_generated += copy_size;
+
+        // Reset HMAC for next iteration
+        hmac.Restart();
+    }
+}
+
+// TLS 1.2 Key Derivation Function optimized for AES-256
+int TLS12_KDF_AES256(
+    const CryptoPP::SecByteBlock& premaster_secret,
+    const CryptoPP::SecByteBlock& client_random,
+    const CryptoPP::SecByteBlock& server_random,
+    CryptoPP::SecByteBlock& master_secret,
+    CryptoPP::SecByteBlock& client_write_key,
+    CryptoPP::SecByteBlock& server_write_key,
+    CryptoPP::SecByteBlock& client_write_iv,
+    CryptoPP::SecByteBlock& server_write_iv
+) {
+    try {
+        // AES-256 key size is 32 bytes (256 bits)
+        const size_t aes256_key_size = 32;
+
+        // IV size for AES in CBC mode is block size (16 bytes)
+        const size_t iv_size = 16;
+
+        // Master secret is always 48 bytes in TLS
+        const size_t master_secret_length = 48;
+        master_secret.resize(master_secret_length);
+
+        // First, derive the master secret from the premaster secret
+        std::string master_label = "master secret";
+        CryptoPP::SecByteBlock seed(client_random.size() + server_random.size());
+        memcpy(seed, client_random.data(), client_random.size());
+        memcpy(seed + client_random.size(), server_random.data(), server_random.size());
+
+        // Call the TLS 1.2 PRF function to generate the master secret
+        TLS12_PRF(premaster_secret, master_label, seed, master_secret, master_secret_length);
+
+        // Now derive the key material from the master secret
+        std::string key_label = "key expansion";
+        CryptoPP::SecByteBlock key_seed(server_random.size() + client_random.size());
+        memcpy(key_seed, server_random.data(), server_random.size());
+        memcpy(key_seed + server_random.size(), client_random.data(), client_random.size());
+
+        // Total key material needed for AES-256:
+        // - Client write key (32 bytes)
+        // - Server write key (32 bytes)
+        // - Client write IV (16 bytes)
+        // - Server write IV (16 bytes)
+        const size_t key_material_length = 2 * aes256_key_size + 2 * iv_size;
+        CryptoPP::SecByteBlock key_block(key_material_length);
+
+        // Generate key block
+        TLS12_PRF(master_secret, key_label, key_seed, key_block, key_material_length);
+
+        // Extract keys and IVs from key block
+        client_write_key.resize(aes256_key_size);
+        server_write_key.resize(aes256_key_size);
+        client_write_iv.resize(iv_size);
+        server_write_iv.resize(iv_size);
+
+        size_t offset = 0;
+
+        // Copy client write key (32 bytes for AES-256)
+        memcpy(client_write_key, key_block + offset, aes256_key_size);
+        offset += aes256_key_size;
+
+        // Copy server write key (32 bytes for AES-256)
+        memcpy(server_write_key, key_block + offset, aes256_key_size);
+        offset += aes256_key_size;
+
+        // Copy client IV (16 bytes)
+        memcpy(client_write_iv, key_block + offset, iv_size);
+        offset += iv_size;
+
+        // Copy server IV (16 bytes)
+        memcpy(server_write_iv, key_block + offset, iv_size);
+
+        return 0;
+    } catch (const CryptoPP::Exception& e) {
+        std::cerr << "Crypto++ exception: " << e.what() << std::endl;
+        return -1;
+    } catch (const std::exception& e) {
+        std::cerr << "Standard exception: " << e.what() << std::endl;
+        return -1;
+    }
+}
+

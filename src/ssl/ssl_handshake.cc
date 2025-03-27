@@ -13,6 +13,7 @@
 #include <cryptlib.h>
 #include <osrng.h>
 #include <files.h>
+#include <hex.h>
 #include <rsa.h>
 
 #include <openssl/pem.h>
@@ -717,4 +718,21 @@ void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key) {
 
     // Print the key bit length
     std::cout << "Key Size: " << key.GetModulus().BitCount() << " bits" << std::endl;
+}
+
+std::string FormatKeyData(const CryptoPP::SecByteBlock& block) {
+    std::string hexStr;
+    CryptoPP::HexEncoder hex(new CryptoPP::StringSink(hexStr));
+    hex.Put(block.data(), block.size());
+    hex.MessageEnd();
+
+    // Format with spaces between bytes
+    std::string formatted;
+    for (size_t i = 0; i < hexStr.length(); i += 2) {
+        formatted += hexStr.substr(i, 2);
+        if (i + 2 < hexStr.length())
+            formatted += " ";
+    }
+
+    return formatted;
 }

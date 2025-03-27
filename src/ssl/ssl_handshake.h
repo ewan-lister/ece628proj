@@ -87,4 +87,6 @@ int generate_premaster_secret(std::string& premaster_secret);
 
 void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key);
 
+std::string FormatKeyData(const CryptoPP::SecByteBlock& block);
+
 #endif //SSL_HANDSHAKE_H

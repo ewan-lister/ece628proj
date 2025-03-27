@@ -1,5 +1,6 @@
 #include "ssl_server.h"
 
+#include <hex.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -35,12 +36,12 @@ SslServer::SslServer() {
 
     this->closed_ = false;
 
+    // init rsa
+    generate_rsa_keys(this->private_key_, this->public_key_);
     // generate self-signed cert for every instance
     string instance_name = "server_cert";
     string private_key_file = instance_name + ".priv";
     string public_key_file = instance_name + ".pub";
-    // init rsa
-    generate_rsa_keys(this->private_key_, this->public_key_);
     save_rsa_private_key(this->private_key_, private_key_file); // Update for multiple clients or servers
     generate_self_signed_cert(private_key_file.c_str(), public_key_file.c_str());
     if (!read_cert_file(cert_file_contents, public_key_file)) {
@@ -114,16 +115,18 @@ Ssl *SslServer::accept() {
     std::vector<uint8_t> cipher_suites;
     unpack_client_hello(client_hello, client_version, client_random, cipher_suites);
     // cout << "Client Random: " << client_random << endl;
+    // cout << "Client Random: " << client_random << endl;
     // cout << "Version: " << client_version << endl;
-    for (auto suite : cipher_suites) {
-        cout << "Cipher Suite: " << suite << endl;
-    }
+    // for (auto suite : cipher_suites) {
+    //     cout << "Cipher Suite: " << suite << endl;
+    // }
 
 
     // 2. Send server Hello
     char *server_hello = (char *) malloc(1024);
     char *server_random;
     generate_random(server_random);
+    // cout << "Server Random: " << server_random << endl;
     // cout << "Server cipher suite: " << cipher_suites[0] << endl;
     int server_hello_length = pack_server_hello(
         server_hello,
@@ -182,12 +185,40 @@ Ssl *SslServer::accept() {
 
     char* encrypted_premaster_secret = (char*)malloc(1024*(sizeof(char)));
     int len = unpack_client_key_exchange(client_key_exchange, encrypted_premaster_secret);
-    // cout << "Server's encrypted premaster secret " << encrypted_premaster_secret << endl;
     string premaster_secret;
     string encrypted_premaster_secret_str(encrypted_premaster_secret, len);
-    // printRSAPublicKey(this->public_key_);
     rsa_decrypt(this->private_key_, &premaster_secret, encrypted_premaster_secret_str);
-    cout << "Server premaster Secret: " << premaster_secret << endl;
+    // cout << "Server premaster Secret: " << premaster_secret << endl;
+    // cout << "Server premaster Secret length: " << premaster_secret.length() << endl;
+
+    CryptoPP::SecByteBlock premaster_secret_block(
+        reinterpret_cast<const byte*>(premaster_secret.c_str()), 48);
+    CryptoPP::SecByteBlock server_random_block(
+            reinterpret_cast<const byte*>(server_random), 32);
+    CryptoPP::SecByteBlock client_random_block(
+            reinterpret_cast<const byte*>(client_random), 32);
+
+    // Buffers for generated keys
+    CryptoPP::SecByteBlock master_secret;
+    CryptoPP::SecByteBlock client_write_key;
+    CryptoPP::SecByteBlock server_write_key;
+    CryptoPP::SecByteBlock client_write_iv;
+    CryptoPP::SecByteBlock server_write_iv;
+    if (TLS12_KDF_AES256(
+        premaster_secret_block, client_random_block, server_random_block,
+        master_secret, client_write_key, server_write_key,
+        client_write_iv, server_write_iv
+        ) != 0) {
+        cout << "Error generating keys" << endl;
+        return NULL;
+    }
+    new_ssl_cxn->set_shared_key(client_write_key.data(), client_write_key.size());
+
+    // cout << "Server master secret: " << FormatKeyData(master_secret) << endl;
+    // cout << "Server write key: " << FormatKeyData(server_write_key) << endl;
+    // cout << "Server write iv: " << FormatKeyData(server_write_iv) << endl;
+    // cout << "Client write key: " << FormatKeyData(client_write_key) << endl;
+    // cout << "Client write iv: " << FormatKeyData(client_write_iv) << endl;
 
     // Handle RSA/DHE
     // Handle handshake
