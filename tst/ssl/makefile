@@ -1,14 +1,15 @@
 CC = g++
 CFLAGS = -c -Wall -g \
-         -I../../src/tcp \
-         -I../../src/ssl \
-         -I../../src/cryptopp \
-         -I/usr/include/openssl     # Add OpenSSL include path
+		-I../../src/tcp \
+		-I../../src/ssl \
+		-I../../src/cryptopp \
+		-I/usr/local/opt/openssl@3/include
 
 LDFLAGS = -L../../src/ssl -lmyssl \
-          -L../../src/cryptopp -lcryptopp \
-          -lpthread \
-          -lssl -lcrypto             # Add OpenSSL libraries
+		-L../../src/cryptopp -lcryptopp \
+		-L/usr/local/opt/openssl@3/lib \
+		-lpthread \
+		-lssl -lcrypto
 
 .PHONY: lib clean
 

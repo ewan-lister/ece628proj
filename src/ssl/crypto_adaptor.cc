@@ -7,6 +7,7 @@
 #include "rsa.h"
 #include "osrng.h"
 
+
 using namespace std;
 using namespace CryptoPP;
 
@@ -44,36 +45,45 @@ int generate_rsa_keys(RSA::PrivateKey &private_key, RSA::PublicKey &public_key) 
 }
 
 int aes_encrypt(const unsigned char* key, size_t key_len,
-                std::string *cipher_text, const std::string &plain_text) {
+                std::string* cipher_text, const std::string& plain_text) {
 
-  // https://www.cryptopp.com/wiki/CBC_Mode
-  SecByteBlock aes_key(key, key_len);
-  byte iv[AES::BLOCKSIZE];
-  memset(iv, 0, AES::BLOCKSIZE);
+    // Create AES key
+    SecByteBlock aes_key(key, key_len);
 
-  try {
-    CBC_Mode<AES>::Encryption aes_enc;
-    aes_enc.SetKeyWithIV(aes_key, aes_key.size(), iv);
+    // Generate a secure IV
+    ::byte iv[AES::BLOCKSIZE];
+    AutoSeededRandomPool prng;
+    prng.GenerateBlock(iv, AES::BLOCKSIZE);
 
-    StringSource ss(
-      plain_text,
-      true,
-      new StreamTransformationFilter( aes_enc,
-        new StringSink( *cipher_text )
-        )
-      );
-  } catch(const CryptoPP::Exception &e) {
-    cerr << e.what() << endl;
-    return -1;
-  }
-  return 0;
+    try {
+        CBC_Mode<AES>::Encryption aes_enc;
+        aes_enc.SetKeyWithIV(aes_key, aes_key.size(), iv);
+
+        // Prepend IV to ciphertext to simplify decryption
+        *cipher_text = std::string(reinterpret_cast<char*>(iv), AES::BLOCKSIZE);
+
+        StringSource ss(
+            plain_text,
+            true,
+            new StreamTransformationFilter(aes_enc,
+                new StringSink(*cipher_text),  // Append encrypted data
+                BlockPaddingSchemeDef::PKCS_PADDING  // Proper padding for variable-length data
+            )
+        );
+    } catch (const Exception& e) {
+        cerr << "Encryption error: " << e.what() << endl;
+        return -1;
+    }
+
+    return 0;
 }
+
 
 int aes_decrypt(const unsigned char* key, size_t key_len,
                 std::string *plain_text, const std::string &cipher_text) {
 
   SecByteBlock aes_key(key, key_len);
-  byte iv[AES::BLOCKSIZE];
+  ::byte iv[AES::BLOCKSIZE];
   memset(iv, 0, AES::BLOCKSIZE);
 
   try {

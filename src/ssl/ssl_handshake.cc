@@ -162,7 +162,7 @@ void generate_self_signed_cert(const char* privKeyFile, const char* certFile) {
 }
 
 void generate_random(char*& random) {
-    byte temp[32];
+    ::byte temp[32];
     // UNIX timestamp (4 bytes)
     std::time_t currentTime = std::time(nullptr);
     temp[0] = (currentTime >> 24) & 0xFF;

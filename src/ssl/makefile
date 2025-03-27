@@ -1,6 +1,14 @@
 CC = g++
-CFLAGS = -c -Wall -g -I../tcp -I../cryptopp
-LDFLAGS = 
+CFLAGS = -c -Wall -g \
+		-I../tcp \
+		-I../cryptopp \
+		-I/usr/local/opt/openssl@3/include \
+
+LDFLAGS = -L../tcp \
+		-L../cryptopp \
+		-L/usr/local/opt/openssl@3/lib \
+		-mmacosx-version-min=15.0 \
+		-lmyssl -lmytcp -lcryptopp -lssl -lcrypto -lpthread
 
 SRC = ssl_server.cc ssl_client.cc ssl.cc crypto_adaptor.cc ssl_handshake.cc
 OBJ = $(SRC:.cc=.o)
