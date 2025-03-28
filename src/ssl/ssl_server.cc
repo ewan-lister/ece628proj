@@ -20,6 +20,7 @@
 #include <openssl/dh.h> // have to homebrew install openssl to use this
 #include <openssl/bn.h>
 #include <vector>
+#include <unistd.h>
 
 using namespace std;
 
@@ -90,6 +91,7 @@ Ssl *SslServer::accept() {
         return NULL;
     }
 
+    std::vector<char*> hs_messages;
     TCP *cxn = this->tcp_->socket_accept();
     if (cxn == NULL) {
         cerr << "error when accepting" << endl;
@@ -97,7 +99,6 @@ Ssl *SslServer::accept() {
     }
 
     cxn->set_logger(this->logger_);
-
     Ssl *new_ssl_cxn = new Ssl(cxn);
     this->clients_.push_back(new_ssl_cxn);
 
@@ -110,6 +111,7 @@ Ssl *SslServer::accept() {
         cerr << "Could not receive Client Hello" << endl;
         return NULL;
     }
+    hs_messages.push_back(client_hello);
     uint16_t client_version;
     char client_random[32];
     std::vector<uint8_t> cipher_suites;
@@ -134,6 +136,7 @@ Ssl *SslServer::accept() {
         server_random,
         cipher_suites[0] // Select first cipher suite
     );
+    hs_messages.push_back(server_hello);
     if (send_server_hello(new_ssl_cxn, server_hello, server_hello_length) != 0) {
         cout << "Could not send Server Hello" << endl;
         return NULL;
@@ -157,6 +160,7 @@ Ssl *SslServer::accept() {
      **/
     CryptoPP::RSA::PublicKey cert_public_key;
     load_and_verify_certificate(cert_file_contents, cert_public_key);
+    hs_messages.push_back(cert_file_contents);
     if (send_cert(new_ssl_cxn, cert_file_contents) != 0) {
         cerr << "Error sending certificate file" << endl;
         return NULL;
@@ -182,6 +186,7 @@ Ssl *SslServer::accept() {
         cerr << "Error receiving client key exchange" << endl;
         return NULL;
     }
+    hs_messages.push_back(client_key_exchange);
 
     char* encrypted_premaster_secret = (char*)malloc(1024*(sizeof(char)));
     int len = unpack_client_key_exchange(client_key_exchange, encrypted_premaster_secret);
@@ -212,7 +217,6 @@ Ssl *SslServer::accept() {
         cout << "Error generating keys" << endl;
         return NULL;
     }
-    new_ssl_cxn->set_shared_key(client_write_key.data(), client_write_key.size());
 
     // cout << "Server master secret: " << FormatKeyData(master_secret) << endl;
     // cout << "Server write key: " << FormatKeyData(server_write_key) << endl;
@@ -225,6 +229,33 @@ Ssl *SslServer::accept() {
     // Handle key exchange
     // Save key and key len
 
+    // cout << "Number of handshake messages: " << hs_messages.size() << endl;
+    // // Receive Finished message
+    char* client_finished;
+    if (recv_finished(new_ssl_cxn, client_finished) != 0) {
+        cerr << "Couldn't receive Finished" << endl;
+        return NULL;
+    }
+    //
+    // cout << "Received client finished message" << endl;
+    // // Check Finished message
+    if (verify_tls_finished_msg(
+        hs_messages, master_secret, reinterpret_cast<const unsigned char *>(client_finished), 12, true
+    ) != 0) {
+        cerr << "Finished message verification failed" << endl;
+        return NULL;
+    }
+    cout << "Sucessfully verified client finished message" << endl;
+
+    // Send Finished message
+    std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, false, 12);
+    std::string message(finished_msg.begin(), finished_msg.end());
+    // Send Finished message
+    if (send_finished(new_ssl_cxn, (char*)message.c_str(), message.size()) != 0) {
+        cerr << "Couldn't send Finished" << endl;
+    }
+
+    new_ssl_cxn->set_shared_key(client_write_key.data(), client_write_key.size());
     free(server_hello);
     free(server_random);
     free(client_key_exchange);

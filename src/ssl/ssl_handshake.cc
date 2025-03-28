@@ -22,6 +22,7 @@
 #include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/x509v3.h>
 #include <openssl/rsa.h>
 
@@ -296,8 +297,8 @@ int send_record(Ssl* cnx, uint8_t type, uint16_t version, char* data, size_t len
     return 0;
 }
 
-int send_client_hello(Ssl* cnx, char* hello, size_t length) {
-    return send_record(cnx, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, hello, length);
+int send_client_hello(Ssl* cnx, char* data, size_t length) {
+    return send_record(cnx, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, data, length);
 }
 
 int send_server_hello(Ssl* cnx, char* hello, size_t length) {
@@ -310,6 +311,15 @@ int send_cert(Ssl* cnx, char* cert) {
 
 int send_cert_request(Ssl* cnx) {
     return send_record(cnx, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99, nullptr, 0);
+}
+
+int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
+    // cout << "Sending client key exchange. len: " << length << endl;
+    return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
+}
+
+int send_finished(Ssl *cnx, char *finished, size_t length) {
+    return send_record(cnx, Ssl::HS_FINISHED, Ssl::VER_99, finished, length);
 }
 
 int recv_data(Ssl* cnx, char*& data,const uint8_t type,const uint16_t version) {
@@ -344,14 +354,14 @@ int recv_client_key_exchange(Ssl* cnx, char*& data) {
     return recv_data(cnx, data, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99);
 }
 
+int recv_finished(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_FINISHED, Ssl::VER_99);
+}
+
+
 int recv_server_hello(Ssl* cnx, char*& data) {
     // cout << "Received server hello" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
-}
-
-int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
-    // cout << "Sending client key exchange. len: " << length << endl;
-    return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
 }
 
 int recv_client_hello(Ssl* cnx, char*& data) {
@@ -707,7 +717,7 @@ int generate_premaster_secret(string& premaster_secret) {
     }
 }
 
-void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key) {
+void print_RSA_public_key(const CryptoPP::RSA::PublicKey& key) {
     std::cout << "RSA Public Key Details:" << std::endl;
 
     // Print the modulus (n)
@@ -720,7 +730,7 @@ void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key) {
     std::cout << "Key Size: " << key.GetModulus().BitCount() << " bits" << std::endl;
 }
 
-std::string FormatKeyData(const CryptoPP::SecByteBlock& block) {
+std::string format_key_data(const CryptoPP::SecByteBlock& block) {
     std::string hexStr;
     CryptoPP::HexEncoder hex(new CryptoPP::StringSink(hexStr));
     hex.Put(block.data(), block.size());
@@ -735,4 +745,94 @@ std::string FormatKeyData(const CryptoPP::SecByteBlock& block) {
     }
 
     return formatted;
+}
+
+std::vector<unsigned char> compute_tls_finished_msg(
+    const std::vector<char*>& handshake_messages,
+    const unsigned char* master_secret,
+    bool is_client,
+    size_t finished_size
+) {
+    // Step 1: Concatenate all handshake messages
+    size_t total_length = 0;
+    for (const char* message : handshake_messages) {
+        total_length += strlen(message);
+    }
+
+    const char* finished_label =
+        is_client ? "client finished" : "server finished";
+
+    unsigned char* handshake_data = new unsigned char[total_length];
+    size_t current_pos = 0;
+
+    for (const char* message : handshake_messages) {
+        size_t msg_len = strlen(message);
+        std::memcpy(handshake_data + current_pos, message, msg_len);
+        current_pos += msg_len;
+    }
+
+    // Step 2: Calculate the hash of all handshake messages
+    unsigned char handshake_hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);  // Using SHA-256 (adjust for TLS version)
+    EVP_DigestUpdate(ctx, handshake_data, total_length);
+    EVP_DigestFinal_ex(ctx, handshake_hash, &hash_len);
+    EVP_MD_CTX_free(ctx);
+
+    delete[] handshake_data;
+
+    // Step 3: Apply the PRF to create the verify_data
+    std::vector<unsigned char> finished_msg(finished_size);
+
+    // TLS PRF: PRF(secret, label, seed) = P_hash(secret, label + seed)
+    unsigned char seed[EVP_MAX_MD_SIZE + 16]; // Label + handshake_hash
+    size_t label_len = strlen(finished_label);
+
+    std::memcpy(seed, finished_label, label_len);
+    std::memcpy(seed + label_len, handshake_hash, hash_len);
+
+    // Using HMAC-based PRF (simplified for demonstration)
+    HMAC_CTX* hmac_ctx = HMAC_CTX_new();
+    HMAC_Init_ex(hmac_ctx, master_secret, 48, EVP_sha256(), NULL);  // 48 bytes master secret
+    HMAC_Update(hmac_ctx, seed, label_len + hash_len);
+
+    unsigned int out_len;
+    HMAC_Final(hmac_ctx, finished_msg.data(), &out_len);
+    HMAC_CTX_free(hmac_ctx);
+
+    return finished_msg;
+}
+
+int verify_tls_finished_msg(
+    const std::vector<char*>& handshake_messages,
+    const unsigned char* master_secret,
+    const unsigned char* received_finished,
+    size_t received_size, // 12 bytes
+    bool is_verifying_client
+) {
+    // Choose the appropriate label based on whose message we're verifying
+    const char* label = is_verifying_client ? "client finished" : "server finished";
+
+    // Calculate what the Finished message should be
+    std::vector<unsigned char> expected_finished = compute_tls_finished_msg(
+        handshake_messages,
+        master_secret,
+        label,
+        received_size
+    );
+
+    // Compare the expected and received Finished messages
+    if (expected_finished.size() != received_size) {
+        return -1;
+    }
+
+    // Constant-time comparison to prevent timing attacks
+    unsigned char result = 0;
+    for (size_t i = 0; i < received_size; i++) {
+        result |= expected_finished[i] ^ received_finished[i];
+    }
+
+    return (result == 0) ? 0 : -1;
 }

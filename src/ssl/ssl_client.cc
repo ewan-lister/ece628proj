@@ -4,6 +4,7 @@
 #include "string.h"
 
 #include <iostream>
+#include <unistd.h>
 
 #include "dh.h"
 #include "integer.h"
@@ -46,6 +47,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     return -1;
   }
 
+  std::vector<char*> hs_messages;
+
   // IMPLEMENT HANDSHAKE HERE
   // 1. Sent Client Hello message
   char* client_random;
@@ -67,6 +70,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     client_random,
     cipher_suites
   );
+  hs_messages.push_back(client_hello);
   if (send_client_hello(this, client_hello, data_length) != 0) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
@@ -78,6 +82,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cerr << "Couldn't receive Server Hello" << endl;
     return -1;
   }
+  hs_messages.push_back(server_hello);
 //  cout << "Received Server Hello: " << endl;
   uint16_t version;
   char server_random[32];
@@ -92,7 +97,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cerr << "Couldn't receive Certificate" << endl;
     return -1;
   }
-  //  cout << "Received Certificate: " << endl;
+  hs_messages.push_back(certificate);
+  // cout << "Received Certificate: " << endl;
 
   // Convert to Crypto++ key
   CryptoPP::RSA::PublicKey cryptoPPKey;
@@ -105,7 +111,9 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
    */
   if (recv_server_hello_done(this, nullptr) != 0) {
     cerr << "Couldn't receive Server Hello Done" << endl;
+    return -1;
   }
+
 //  cout << "Received server hello done: " << endl;
 
   string premaster_secret;
@@ -124,8 +132,10 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   int len = pack_client_key_exchange(client_key_exchange, encrypted_premaster_secret.c_str(), encrypted_premaster_secret.length());
   //  cout << "Client key exchange length: " << len << endl;
   //  cout << "Client Key Exchange: " << client_key_exchange << endl;
+  hs_messages.push_back(client_key_exchange);
   if (send_client_key_exchange(this, client_key_exchange, len) != 0) {
     cerr << "Couldn't send Client Key Exchange" << endl;
+    return -1;
   }
 
   CryptoPP::SecByteBlock premaster_secret_block(
@@ -147,9 +157,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
         client_write_iv, server_write_iv
         ) != 0) {
         cout << "Error generating keys" << endl;
-        return NULL;
+        return -1;
     }
-    this->set_shared_key(client_write_key.data(), client_write_key.size());
 
    // cout << "Client master secret: " << FormatKeyData(master_secret) << endl;
    // cout << "Server write key: " << FormatKeyData(server_write_key) << endl;
@@ -165,7 +174,34 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // Handle key exchange
 
   // Save key and key len
-  
+
+  cout << "Client Number of handshake messages: " << hs_messages.size() << endl;
+  // Send Finished message
+  std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, true, 12);
+  std::string message(finished_msg.begin(), finished_msg.end());
+  cout << "Finished message length: " << message.size() << endl;
+  cout << "Finished message: " << message.c_str() << endl;
+
+  // Send Finished message
+  if (send_finished(this, (char*)message.c_str(), message.size()) != 0) {
+    cerr << "Couldn't send Finished" << endl;
+    return -1;
+  }
+
+  this->set_shared_key(client_write_key.data(), client_write_key.size());
+
+  // Receive Finished message
+  char* server_finished;
+  if (recv_finished(this, server_finished) != 0) {
+    cerr << "Couldn't receive Finished" << endl;
+    return -1;
+  }
+  // Check Finished message
+  if (verify_tls_finished_msg(hs_messages, master_secret, reinterpret_cast<const unsigned char*>(server_finished), 12, false) != 0) {
+    cerr << "Finished message verification failed" << endl;
+  }
+  cout << "Sucessfully verified server finished message" << endl;
+
   free(client_hello);
   free(client_random);
   free(client_key_exchange);
