@@ -245,7 +245,7 @@ Ssl *SslServer::accept() {
         cerr << "Finished message verification failed" << endl;
         return NULL;
     }
-    cout << "Sucessfully verified client finished message" << endl;
+    // cout << "Sucessfully verified client finished message" << endl;
 
     // Send Finished message
     std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, false, 12);
@@ -256,6 +256,7 @@ Ssl *SslServer::accept() {
     }
 
     new_ssl_cxn->set_shared_key(client_write_key.data(), client_write_key.size());
+    hs_messages.clear();
     free(server_hello);
     free(server_random);
     free(client_key_exchange);

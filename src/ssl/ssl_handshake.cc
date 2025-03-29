@@ -812,14 +812,11 @@ int verify_tls_finished_msg(
     size_t received_size, // 12 bytes
     bool is_verifying_client
 ) {
-    // Choose the appropriate label based on whose message we're verifying
-    const char* label = is_verifying_client ? "client finished" : "server finished";
-
     // Calculate what the Finished message should be
     std::vector<unsigned char> expected_finished = compute_tls_finished_msg(
         handshake_messages,
         master_secret,
-        label,
+        is_verifying_client,
         received_size
     );
 

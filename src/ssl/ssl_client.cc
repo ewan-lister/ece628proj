@@ -179,8 +179,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // Send Finished message
   std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, true, 12);
   std::string message(finished_msg.begin(), finished_msg.end());
-  cout << "Finished message length: " << message.size() << endl;
-  cout << "Finished message: " << message.c_str() << endl;
+//  cout << "Finished message length: " << message.size() << endl;
+//  cout << "Finished message: " << message.c_str() << endl;
 
   // Send Finished message
   if (send_finished(this, (char*)message.c_str(), message.size()) != 0) {
@@ -200,8 +200,9 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   if (verify_tls_finished_msg(hs_messages, master_secret, reinterpret_cast<const unsigned char*>(server_finished), 12, false) != 0) {
     cerr << "Finished message verification failed" << endl;
   }
-  cout << "Sucessfully verified server finished message" << endl;
+//  cout << "Sucessfully verified server finished message" << endl;
 
+  hs_messages.clear();
   free(client_hello);
   free(client_random);
   free(client_key_exchange);
