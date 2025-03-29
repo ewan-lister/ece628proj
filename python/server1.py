@@ -3,19 +3,38 @@
 from projectclasses.tcp import TCP  # Import the TCP class
 from projectclasses.server import Server
 import time
+import signal
+import sys
+import logging
+
+def setup_logging():
+    """Configure logging for the server"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully"""
+    print("\nShutting down server...")
+    if 'server' in globals():
+        server.close()
+    sys.exit(0)
 
 if __name__ == "__main__":
-    server = Server('127.0.0.1', 65432)  # Create an instance of Server
-    server.start()  # Start the server
+    # Set up logging
+    setup_logging()
+    logger = logging.getLogger('ServerMain')
 
-    # Simulate server communication
-    time.sleep(2)  # Wait for the client to connect and send a message
-    message = server.receive()  # Receive a message from the client
-    # print(f"Server received: {message}")
-    
-    # Send a response
-    server.send("Hello from server!")
-    # print("Server sent: 'Hello from server!'")
-    
-    # Close the connection
-    server.close()
+    # Set up signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+
+    # Create and start server
+    server = Server("localhost", 8443)
+    try:
+        logger.info("Starting server on localhost:8443")
+        server.start()  # This will run indefinitely, accepting clients
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+    finally:
+        server.close()
