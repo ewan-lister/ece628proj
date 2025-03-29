@@ -22,6 +22,7 @@
 #include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <openssl/x509v3.h>
 #include <openssl/rsa.h>
 
@@ -296,8 +297,8 @@ int send_record(Ssl* cnx, uint8_t type, uint16_t version, char* data, size_t len
     return 0;
 }
 
-int send_client_hello(Ssl* cnx, char* hello, size_t length) {
-    return send_record(cnx, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, hello, length);
+int send_client_hello(Ssl* cnx, char* data, size_t length) {
+    return send_record(cnx, Ssl::HS_CLIENT_HELLO, Ssl::VER_99, data, length);
 }
 
 int send_server_hello(Ssl* cnx, char* hello, size_t length) {
@@ -310,6 +311,15 @@ int send_cert(Ssl* cnx, char* cert) {
 
 int send_cert_request(Ssl* cnx) {
     return send_record(cnx, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99, nullptr, 0);
+}
+
+int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
+    // cout << "Sending client key exchange. len: " << length << endl;
+    return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
+}
+
+int send_finished(Ssl *cnx, char *finished, size_t length) {
+    return send_record(cnx, Ssl::HS_FINISHED, Ssl::VER_99, finished, length);
 }
 
 int recv_data(Ssl* cnx, char*& data,const uint8_t type,const uint16_t version) {
@@ -344,14 +354,14 @@ int recv_client_key_exchange(Ssl* cnx, char*& data) {
     return recv_data(cnx, data, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99);
 }
 
+int recv_finished(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_FINISHED, Ssl::VER_99);
+}
+
+
 int recv_server_hello(Ssl* cnx, char*& data) {
     // cout << "Received server hello" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
-}
-
-int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
-    // cout << "Sending client key exchange. len: " << length << endl;
-    return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
 }
 
 int recv_client_hello(Ssl* cnx, char*& data) {
@@ -505,8 +515,8 @@ size_t unpack_uint8(const char* buffer, size_t offset, uint8_t& value) {
 // Unpack uint16_t from a buffer (little-endian)
 size_t unpack_uint16(const char* buffer, size_t offset, uint16_t& value) {
     value = static_cast<uint16_t>(
-        (static_cast<uint8_t>(buffer[offset]) << 8) |     // High byte
-        (static_cast<uint8_t>(buffer[offset + 1]))        // Low byte
+        ((static_cast<uint8_t>(buffer[offset]) << 8) & 0xFFFF) |     // High byte
+        (static_cast<uint8_t>(buffer[offset + 1]) & 0xFF)        // Low byte
     );
     return offset + 2;
 }
@@ -522,7 +532,7 @@ int pack_client_key_exchange(char*& buffer, const char* data, size_t length) {
     offset = pack_uint16_at_offset(buffer, offset, (uint16_t) length);
     offset = pack_bytes(buffer, offset, data, length);
 
-    cout << "Client key exchange length: " << offset << endl;
+    // cout << "Client key exchange length: " << offset << endl;
     return offset;
 }
 
@@ -530,7 +540,7 @@ int unpack_client_key_exchange(char* buffer, char*& data) {
     size_t offset = 0;
 
     // Read total length from first 2 bytes (big-endian)
-    uint16_t total_length = (static_cast<uint16_t>(buffer[offset]) << 8 & 0xFFFF) |
+    uint16_t total_length = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFFFF) |
                        static_cast<uint16_t>(buffer[offset + 1] & 0xFF);
     // cout << "Server Client key exchange length: " << total_length << endl;
     offset += 2;
@@ -623,8 +633,8 @@ int unpack_server_hello(
     offset += 2;
 
     // Read protocol version
-    version = (static_cast<uint16_t>(buffer[offset]) << 8) |
-                       static_cast<uint16_t>(buffer[offset + 1]);
+    version = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFFFF) |
+                       (static_cast<uint16_t>(buffer[offset + 1]) & 0xFF);
     offset += 2;
 
     // Read random (32 bytes)
@@ -651,8 +661,8 @@ int unpack_client_hello(
     offset += 2;
 
     // Read protocol version
-    protocol_version = (static_cast<uint16_t>(buffer[offset]) << 8) |
-                       static_cast<uint16_t>(buffer[offset + 1]);
+    protocol_version = ((static_cast<uint16_t>(buffer[offset]) << 8) & 0xFFFF) |
+                       (static_cast<uint16_t>(buffer[offset + 1] & 0xFF));
     offset += 2;
 
     // Read random (32 bytes)
@@ -663,8 +673,8 @@ int unpack_client_hello(
     cipher_suites.clear();
 
     // Read cipher suites length (2 bytes)
-    uint16_t cipher_suites_length = (static_cast<uint16_t>(buffer[offset]) << 8) |
-                                    static_cast<uint16_t>(buffer[offset + 1]);
+    uint16_t cipher_suites_length = ((static_cast<uint16_t>(buffer[offset]) << 8) & 0xFFFF) |
+                                    (static_cast<uint16_t>(buffer[offset + 1]) & 0xFF );
     offset += 2;
 
     // Read individual cipher suites
@@ -676,6 +686,24 @@ int unpack_client_hello(
 }
 
 void print_buffer_hex(char* buffer, size_t length) {
+    std::cout << std::hex << std::setfill('0');
+    for (size_t i = 0; i < length; ++i) {
+        std::cout << std::setw(2)
+                  << (int)(unsigned char)buffer[i] << " ";
+    }
+    std::cout << std::dec << std::endl;  // Reset to decimal
+}
+
+void print_buffer_hex(unsigned char* buffer, size_t length) {
+    std::cout << std::hex << std::setfill('0');
+    for (size_t i = 0; i < length; ++i) {
+        std::cout << std::setw(2)
+                  << (int)(unsigned char)buffer[i] << " ";
+    }
+    std::cout << std::dec << std::endl;  // Reset to decimal
+}
+
+void print_buffer_hex(std::vector<unsigned char> buffer, size_t length) {
     std::cout << std::hex << std::setfill('0');
     for (size_t i = 0; i < length; ++i) {
         std::cout << std::setw(2)
@@ -707,7 +735,7 @@ int generate_premaster_secret(string& premaster_secret) {
     }
 }
 
-void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key) {
+void print_RSA_public_key(const CryptoPP::RSA::PublicKey& key) {
     std::cout << "RSA Public Key Details:" << std::endl;
 
     // Print the modulus (n)
@@ -720,7 +748,7 @@ void printRSAPublicKey(const CryptoPP::RSA::PublicKey& key) {
     std::cout << "Key Size: " << key.GetModulus().BitCount() << " bits" << std::endl;
 }
 
-std::string FormatKeyData(const CryptoPP::SecByteBlock& block) {
+std::string format_key_data(const CryptoPP::SecByteBlock& block) {
     std::string hexStr;
     CryptoPP::HexEncoder hex(new CryptoPP::StringSink(hexStr));
     hex.Put(block.data(), block.size());
@@ -736,3 +764,195 @@ std::string FormatKeyData(const CryptoPP::SecByteBlock& block) {
 
     return formatted;
 }
+
+std::vector<unsigned char> compute_tls_finished_msg(
+    const std::vector<char*>& handshake_messages,
+    const unsigned char* master_secret,
+    bool is_client,
+    size_t finished_size
+) {
+    // Step 1: Concatenate all handshake messages
+    size_t total_length = 0;
+    for (const char* message : handshake_messages) {
+        total_length += strlen(message);
+    }
+
+    const char* finished_label =
+        is_client ? "client finished" : "server finished";
+
+    unsigned char* handshake_data = new unsigned char[total_length];
+    size_t current_pos = 0;
+
+    for (const char* message : handshake_messages) {
+        size_t msg_len = strlen(message);
+        std::memcpy(handshake_data + current_pos, message, msg_len);
+        current_pos += msg_len;
+    }
+
+    // Step 2: Calculate the hash of all handshake messages
+    unsigned char handshake_hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len;
+
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);  // Using SHA-256 (adjust for TLS version)
+    EVP_DigestUpdate(ctx, handshake_data, total_length);
+    EVP_DigestFinal_ex(ctx, handshake_hash, &hash_len);
+    EVP_MD_CTX_free(ctx);
+
+    delete[] handshake_data;
+
+    // Step 3: Apply the PRF to create the verify_data
+    std::vector<unsigned char> finished_msg(finished_size);
+
+    // TLS PRF: PRF(secret, label, seed) = P_hash(secret, label + seed)
+    unsigned char seed[EVP_MAX_MD_SIZE + 16]; // Label + handshake_hash
+    size_t label_len = strlen(finished_label);
+
+    std::memcpy(seed, finished_label, label_len);
+    std::memcpy(seed + label_len, handshake_hash, hash_len);
+
+    // Using HMAC-based PRF (simplified for demonstration)
+    HMAC_CTX* hmac_ctx = HMAC_CTX_new();
+    HMAC_Init_ex(hmac_ctx, master_secret, 48, EVP_sha256(), NULL);  // 48 bytes master secret
+    HMAC_Update(hmac_ctx, seed, label_len + hash_len);
+
+    unsigned int out_len;
+    HMAC_Final(hmac_ctx, finished_msg.data(), &out_len);
+    HMAC_CTX_free(hmac_ctx);
+
+    return finished_msg;
+}
+
+int verify_tls_finished_msg(
+    const std::vector<char*>& handshake_messages,
+    const unsigned char* master_secret,
+    const unsigned char* received_finished,
+    size_t received_size, // 12 bytes
+    bool is_verifying_client
+) {
+    // Calculate what the Finished message should be
+    std::vector<unsigned char> expected_finished = compute_tls_finished_msg(
+        handshake_messages,
+        master_secret,
+        is_verifying_client,
+        received_size
+    );
+
+    // Compare the expected and received Finished messages
+    if (expected_finished.size() != received_size) {
+        return -1;
+    }
+
+    // Constant-time comparison to prevent timing attacks
+    unsigned char result = 0;
+    for (size_t i = 0; i < received_size; i++) {
+        result |= expected_finished[i] ^ received_finished[i];
+    }
+
+    cout << "Finished message verification result: " << (result == 0 ? "SUCCESS" : "FAILED") << endl;
+    return (result == 0) ? 0 : -1;
+}
+
+void append_bignum(std::vector<unsigned char>& output, const BIGNUM* bn) {
+    int len = BN_num_bytes(bn);
+
+    // Add length as 2 bytes (big-endian)
+    output.push_back((len >> 8) & 0xFF);
+    output.push_back(len & 0xFF);
+
+    // Add the BIGNUM bytes
+    size_t offset = output.size();
+    output.resize(offset + len);
+    BN_bn2bin(bn, output.data() + offset);
+}
+
+std::vector<unsigned char> generate_dhe_server_key_exchange(
+    const char* client_random,
+    const char* server_random,
+    const CryptoPP::RSA::PrivateKey& server_key,
+    DH** out_dh)
+{
+    // Parameter validation
+    if (!client_random || !server_random || !out_dh) {
+        throw std::invalid_argument("Invalid input parameters");
+    }
+
+    // Use standard 2048-bit DH parameters (FFDHE2048 from RFC 7919)
+    std::unique_ptr<DH, decltype(&DH_free)> dh(DH_get_2048_256(), &DH_free);
+    if (!dh) {
+        throw std::runtime_error("Failed to get DH parameters");
+    }
+
+    // Generate server's ephemeral DH key
+    if (DH_generate_key(dh.get()) != 1) {
+        throw std::runtime_error("Failed to generate DH keypair");
+    }
+
+    // Get DH components
+    const BIGNUM *p, *g, *pub_key;
+    DH_get0_pqg(dh.get(), &p, nullptr, &g);
+    DH_get0_key(dh.get(), &pub_key, nullptr);
+
+    // Serialize the DH params into the format needed for TLS
+    std::vector<unsigned char> serialized_params;
+
+    // Append p, g, and public key with their lengths
+    append_bignum(serialized_params, p);
+    append_bignum(serialized_params, g);
+    append_bignum(serialized_params, pub_key);
+
+    // Create the data to be signed (client_random + server_random + serialized_params)
+    std::vector<unsigned char> data_to_sign;
+    const size_t random_size = 32; // TLS random values are always 32 bytes
+    data_to_sign.reserve(random_size * 2 + serialized_params.size());
+
+    // Add client_random and server_random (casting to unsigned char* for byte operations)
+    data_to_sign.insert(data_to_sign.end(),
+                      reinterpret_cast<const unsigned char*>(client_random),
+                      reinterpret_cast<const unsigned char*>(client_random + random_size));
+    data_to_sign.insert(data_to_sign.end(),
+                      reinterpret_cast<const unsigned char*>(server_random),
+                      reinterpret_cast<const unsigned char*>(server_random + random_size));
+    data_to_sign.insert(data_to_sign.end(), serialized_params.begin(), serialized_params.end());
+
+    // Sign the data with PKCS#1 v1.5 padding and SHA-256
+    CryptoPP::AutoSeededRandomPool rng;
+    CryptoPP::RSASSA_PKCS1v15_SHA_Signer signer(server_key);
+
+    // Create signature
+    std::vector<unsigned char> signature(signer.MaxSignatureLength());
+    size_t sig_len = signer.SignMessage(
+        rng,
+        data_to_sign.data(),
+        data_to_sign.size(),
+        signature.data()
+    );
+    signature.resize(sig_len);
+
+    // Assemble the complete Server Key Exchange message
+    std::vector<unsigned char> server_key_exchange;
+    server_key_exchange.reserve(serialized_params.size() + 4 + signature.size());
+
+    // DH parameters
+    server_key_exchange.insert(server_key_exchange.end(),
+                              serialized_params.begin(),
+                              serialized_params.end());
+
+    // Signature algorithm: 0x0401 (RSA PKCS#1 with SHA-256)
+    server_key_exchange.push_back(0x04);
+    server_key_exchange.push_back(0x01);
+
+    // Signature length (2 bytes)
+    server_key_exchange.push_back((signature.size() >> 8) & 0xFF);
+    server_key_exchange.push_back(signature.size() & 0xFF);
+
+    // Signature value
+    server_key_exchange.insert(server_key_exchange.end(), signature.begin(), signature.end());
+
+    // Transfer ownership of DH object to caller
+    *out_dh = dh.release();
+
+    return server_key_exchange;
+}
+
+

@@ -4,6 +4,7 @@
 #include "string.h"
 
 #include <iostream>
+#include <unistd.h>
 
 #include "dh.h"
 #include "integer.h"
@@ -46,6 +47,9 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     return -1;
   }
 
+  std::vector<char*> hs_messages;
+  uint8_t key_exchange;
+
   // IMPLEMENT HANDSHAKE HERE
   // 1. Sent Client Hello message
   char* client_random;
@@ -54,8 +58,10 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   std::vector<uint8_t> cipher_suites;
 
   if (cxntype == Ssl::KE_DHE) {
+    key_exchange = Ssl::KE_DHE;
     cipher_suites.push_back(0x35);
   } else if (cxntype == Ssl::KE_RSA) {
+    key_exchange = Ssl::KE_RSA;
     cipher_suites.push_back(0x2F);
   } else {
     cerr << "Invalid connection type" << endl;
@@ -67,45 +73,54 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     client_random,
     cipher_suites
   );
+  this->logger_->log(("Client Hello: "));
+  hs_messages.push_back(client_hello);
   if (send_client_hello(this, client_hello, data_length) != 0) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
   }
-//  cout << "Sent Client Hello: " << endl;
 
+  // 2. Receive Server Hello message
+  this->logger_->log(("Server Hello: "));
   char* server_hello;
   if (recv_server_hello(this, server_hello) != 0) {
     cerr << "Couldn't receive Server Hello" << endl;
     return -1;
   }
-//  cout << "Received Server Hello: " << endl;
+  hs_messages.push_back(server_hello);
   uint16_t version;
   char server_random[32];
   uint8_t cipher_suite;
   unpack_server_hello(server_hello, version, server_random, cipher_suite);
-//  cout << "Server Version: " << version << endl;
-//  cout << "Server Random: " << server_random << endl;
-//  cout << "Server Cipher Suite: " << cipher_suite << endl;
 
+  // 3. Receive Certificate message
+  this->logger_->log(("Certificate: "));
   char* certificate;
   if (recv_cert(this, certificate) != 0) {
     cerr << "Couldn't receive Certificate" << endl;
     return -1;
   }
-  //  cout << "Received Certificate: " << endl;
+  hs_messages.push_back(certificate);
 
   // Convert to Crypto++ key
   CryptoPP::RSA::PublicKey cryptoPPKey;
   load_and_verify_certificate(certificate, cryptoPPKey);
-  /**
-   * Verify certificate is not expired
-   * Ensure certificate is signed by the CA
-   * Maybe check Cert is not revoked
-   * certificate matches server domain
-   */
+
+  // 4. Receive Server Key Exchange message
+//  if (recv_server_key_exchange(this, nullptr) != 0) {
+//    cerr << "Couldn't receive Server Key Exchange" << endl;
+//    return -1;
+//  }
+
+  // 5. Receive Certificate Request message
+
+
+  // 6. Receive Server Hello Done message
   if (recv_server_hello_done(this, nullptr) != 0) {
     cerr << "Couldn't receive Server Hello Done" << endl;
+    return -1;
   }
+
 //  cout << "Received server hello done: " << endl;
 
   string premaster_secret;
@@ -123,9 +138,11 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   char* client_key_exchange = (char*)malloc(1024*(sizeof(char)));
   int len = pack_client_key_exchange(client_key_exchange, encrypted_premaster_secret.c_str(), encrypted_premaster_secret.length());
   //  cout << "Client key exchange length: " << len << endl;
-  //  cout << "Client Key Exchange: " << client_key_exchange << endl;
+  this->logger_->log(("Client Key Exchange"));
+  hs_messages.push_back(client_key_exchange);
   if (send_client_key_exchange(this, client_key_exchange, len) != 0) {
     cerr << "Couldn't send Client Key Exchange" << endl;
+    return -1;
   }
 
   CryptoPP::SecByteBlock premaster_secret_block(
@@ -147,9 +164,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
         client_write_iv, server_write_iv
         ) != 0) {
         cout << "Error generating keys" << endl;
-        return NULL;
+        return -1;
     }
-    this->set_shared_key(client_write_key.data(), client_write_key.size());
 
    // cout << "Client master secret: " << FormatKeyData(master_secret) << endl;
    // cout << "Server write key: " << FormatKeyData(server_write_key) << endl;
@@ -165,7 +181,39 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // Handle key exchange
 
   // Save key and key len
-  
+
+  // cout << "Client Number of handshake messages: " << hs_messages.size() << endl;
+  // Send Finished message
+  std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, true, 12);
+  std::string message(finished_msg.begin(), finished_msg.end());
+  //  cout << "Finished message length: " << message.size() << endl;
+//  cout << "Finished message: " << message.c_str() << endl;
+
+  // Send Finished message
+  if (send_finished(this, (char*)message.c_str(), message.size()) != 0) {
+    cerr << "Couldn't send Finished" << endl;
+    return -1;
+  }
+
+  this->set_shared_key(client_write_key.data(), client_write_key.size());
+
+  // Receive Finished message
+  char* server_finished;
+  if (recv_finished(this, server_finished) != 0) {
+    cerr << "Couldn't receive Finished" << endl;
+    return -1;
+  }
+  // Check Finished message
+  if (verify_tls_finished_msg(hs_messages, master_secret, reinterpret_cast<const unsigned char*>(server_finished), 12, false) != 0) {
+    cerr << "Finished message verification failed" << endl;
+    return -1;
+  }
+  cout << "Sucessfully verified server finished message" << endl;
+
+  free(certificate);
+  free(server_hello);
+  free(server_finished);
+  hs_messages.clear();
   free(client_hello);
   free(client_random);
   free(client_key_exchange);

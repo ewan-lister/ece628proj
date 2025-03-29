@@ -1,6 +1,7 @@
 #ifndef SSL_H
 #define SSL_H
 
+#include <rsa.h>
 #include <stdint.h>
 
 #include <string>
@@ -58,7 +59,7 @@ class Ssl {
 
   // TLS ciphersuites
   static const uint8_t TLS_RSA_WITH_AES_256_CBC_SHA_256 = 0x2F;
-  static const uint8_t TLS_DHE_WITH_AES_256_CBC_SHA_256 = 0x35;
+  static const uint8_t TLS_DHE_RSA_WITH_AES_256_CBC_SHA_256 = 0x35;
 
  //////////////////////////////////////////////
  // ssl functions
@@ -89,6 +90,9 @@ class Ssl {
   size_t shared_key_len_;
   unsigned char* shared_read_key_;
   size_t shared_read_key_len_;
+
+  CryptoPP::RSA::PrivateKey private_key_;
+  CryptoPP::RSA::PublicKey public_key_;
 };
 
 

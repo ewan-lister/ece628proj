@@ -40,9 +40,6 @@ class SslServer: public Ssl {
   // CryptoPP::Integer dh_g_;
   DH* dh;
   const BIGNUM* dh_priv_key; // pub_key is in public field
-
-  CryptoPP::RSA::PrivateKey private_key_;
-  CryptoPP::RSA::PublicKey public_key_;
 };
 
 #endif // SSL_SERVER_H

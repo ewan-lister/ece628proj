@@ -10,7 +10,10 @@ tst/ssl/address.txt
 tst/ssl/main_client1
 tst/ssl/main_client2
 tst/ssl/main_server
+tst/ssl/server_cert.priv
+tst/ssl/server_cert.pub
 tst/ssl/*.log
+tst/ssl/log
 tst/.DS_Store
 src/cryptopp/*.o
 src/cryptopp/*.a
