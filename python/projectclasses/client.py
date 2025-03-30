@@ -6,10 +6,22 @@ import time
 import logging
 
 class Client:
-    def __init__(self, host, port):
+
+    RSA_SUITE = "TLS_RSA_WITH_AES_256_CBC_SHA256"
+    DHE_SUITE = "TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"
+
+    CIPHER_SUITE_MAP = {
+        RSA_SUITE: 0x003D,
+        DHE_SUITE: 0x006B
+    }
+
+    def __init__(self, host, port, supported_suite = None):  
         self.tcp = TCP(host, port)
         self.tls = None
         self.client_random = None
+        self.server_random = None
+        self.connection_id = id
+        self.supported_suite = supported_suite
         self.logger = logging.getLogger('Client')
 
     def connect(self):
@@ -21,7 +33,7 @@ class Client:
 
             # Step 2: Initialize TLS instance and perform handshake
             self.client_random = self._generate_client_random()
-            self.tls = TLS(self.tcp, 5,supported_suites=[TLS.RSA_SUITE])  # or DHE_SUITE
+            self.tls = TLS(self.tcp,supported_suites=self.supported_suite)  # or DHE_SUITE
             
             # Start TLS handshake
             print("Do we reach this point?")
@@ -30,9 +42,12 @@ class Client:
             self.logger.info("TLS handshake initiated")
 
             # Receive and process server response
-            content_type, version, server_hello = self.tls.receive_tls_record()
-            if content_type != 22:  # Handshake type
-                raise ValueError("Unexpected message type during handshake")
+            server_random, chosen_cipher = self.tls.receive_server_hello()
+
+            if chosen_cipher == self.CIPHER_SUITE_MAP[self.RSA_SUITE]:
+                shared_secret = self.rsa_handshake(self.client_random, server_random)
+            else:
+                shared_secret = self.dhe_handshake(self.client_random, server_random)
 
             # Complete remaining handshake steps...
             self.logger.info("TLS handshake completed")
@@ -68,3 +83,22 @@ class Client:
         timestamp = struct.pack("!I", int(time.time()))
         random_bytes = os.urandom(28)
         return timestamp + random_bytes
+    
+    def rsa_handshake(self, client_random, server_random):
+        """Perform RSA handshake"""
+        # Placeholder for RSA handshake logic
+        server_certificate = self.tls.receive_server_certificate()
+        valid, server_signing_key = self.tls.verify_certificate(server_certificate)
+        if not valid:
+            raise Exception("Invalid server certificate")
+        # receive server certificate request
+        self.tls.receive_certificate_request()
+        #receive server hello done
+        self.tls.receive_server_hello_done()
+
+        
+
+    # def dhe_handshake(self, random):
+    #     """Perform DHE handshake"""
+    #     # Placeholder for DHE handshake logic
+    #     pass

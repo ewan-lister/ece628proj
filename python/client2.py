@@ -20,7 +20,7 @@ if __name__ == "__main__":
 
     try:
         # Create client instance with correct port
-        client = Client('localhost', 8443, ["TLS_RSA_WITH_AES_256_CBC_SHA256"])
+        client = Client('localhost', 8443, ["TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"])
         logger.info("Connecting to server...")
         client.connect()
         
