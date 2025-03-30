@@ -10,7 +10,7 @@ import logging
 def setup_logging():
     """Configure logging for the server"""
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
 
     # Create and start server
-    server = Server("localhost", 8443, ["TLS_RSA_WITH_AES_256_CBC_SHA256","TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"])
+    server = Server("localhost", 8444, ["TLS_RSA_WITH_AES_256_CBC_SHA256","TLS_DHE_RSA_WITH_AES_256_CBC_SHA256"])
     try:
         logger.info("Starting server on localhost:8443")
         server.start()  # This will run indefinitely, accepting clients

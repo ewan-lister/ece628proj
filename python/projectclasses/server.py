@@ -7,6 +7,9 @@ from typing import Dict, Optional
 from projectclasses.tcp import TCP
 from projectclasses.tls import TLS
 from projectclasses.crypto import Certificate
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
 
 class Server:
 
@@ -92,6 +95,9 @@ class Server:
             else:
                 shared_secret = self.dhe_handshake(self.server_random, client_random, tls)
             
+            tls.derive_keys(is_client=False)
+            tls.receive_finished()
+            tls.send_finished()
             # Continue with client handling after handshake
             self.handle_client(client_id)
             
@@ -104,13 +110,26 @@ class Server:
         try:
             tls = self.tls_connections[client_id]
             
-            # Handle client messages
             while self.running:
-                content_type, version, data = tls.receive_tls_record()
-                if not data:
+                try:
+                    # Receive decrypted data
+                    data = tls.receive_application_data()
+                    if not data:
+                        break
+                    
+                    self.logger.debug(f"Received from client {client_id}: {len(data)} bytes")
+                    
+                    # Process the data (example: echo back)
+                    response = data  # Or process data here
+                    
+                    # Send encrypted response
+                    tls.send_application_data(response)
+                    self.logger.debug(f"Sent to client {client_id}: {len(response)} bytes")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing message from client {client_id}: {e}")
                     break
-                # Process received data...
-                
+                    
         except Exception as e:
             self.logger.error(f"Error handling client {client_id}: {e}")
         finally:
@@ -149,14 +168,40 @@ class Server:
         # send certificate request
         tls.send_certificate_request()
         # send ServerHelloDone
+        tls.send_server_hello_done()
 
         client_certificate = tls.receive_client_certificate()
         valid, client_signing_key = tls.verify_certificate(client_certificate)
         if not valid:
             raise Exception("Invalid server certificate")
         
+        # receive client key exchange
+        premaster_secret = tls.receive_rsa_client_key_exchange(self.certificate.private_key, client_signing_key)
+        tls.receive_certificate_verify(client_signing_key)
 
-    # def dhe_handshake(self, random):
-    #     """Perform DHE handshake"""
-    #     # Placeholder for DHE handshake logic
-    #     pass
+        # receive change cipher spec
+        tls.receive_change_cipher_spec()
+
+    def dhe_handshake(self, client_random, server_random, tls):
+        """Perform DHE handshake"""
+        # Placeholder for DHE handshake logic
+        # send server certificate
+        tls.send_server_certificate(self.certificate)
+        # send server key exchange
+        server_dh_private_key = tls.send_server_key_exchange_dhe(self.certificate.private_key)
+        # send certificate request
+        tls.send_certificate_request()
+        # send ServerHelloDone
+        tls.send_server_hello_done()
+
+        client_certificate = tls.receive_client_certificate()
+        valid, client_signing_key = tls.verify_certificate(client_certificate)
+        if not valid:
+            raise Exception("Invalid server certificate")
+        
+        # receive client key exchange
+        premaster_secret = tls.receive_client_key_exchange_dhe(server_dh_private_key)
+        tls.receive_certificate_verify(client_signing_key)
+
+        # receive change cipher spec
+        tls.receive_change_cipher_spec()

@@ -1,9 +1,13 @@
 from projectclasses.tcp import TCP
 from projectclasses.tls import TLS
+from projectclasses.crypto import Certificate
 import os
 import struct
 import time
 import logging
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
 
 class Client:
 
@@ -23,6 +27,14 @@ class Client:
         self.connection_id = id
         self.supported_suite = supported_suite
         self.logger = logging.getLogger('Client')
+        
+        # Initialize client certificate
+        self.certificate = Certificate()
+        self.certificate.generate_keys()
+        self.certificate.generate_certificate(
+            subject_name=f"TLS Client {host}:{port}",
+            issuer_name="TLS Client CA"
+        )
 
     def connect(self):
         """Establish connection and perform TLS handshake"""
@@ -49,6 +61,9 @@ class Client:
             else:
                 shared_secret = self.dhe_handshake(self.client_random, server_random)
 
+            self.tls.derive_keys(is_client=True)
+            self.tls.send_finished()
+            self.tls.receive_finished()
             # Complete remaining handshake steps...
             self.logger.info("TLS handshake completed")
 
@@ -61,15 +76,15 @@ class Client:
         """Send encrypted application data"""
         if not self.tls:
             raise RuntimeError("TLS connection not established")
-        self.tls.send_tls_record(23, (3, 3), data)  # 23 = Application Data
-        self.logger.debug(f"Sent {len(data)} bytes")
+        self.tls.send_application_data(data)
+        self.logger.debug(f"Sent encrypted data: {len(data)} bytes")
 
     def receive(self) -> bytes:
         """Receive and decrypt application data"""
         if not self.tls:
             raise RuntimeError("TLS connection not established")
-        content_type, version, data = self.tls.receive_tls_record()
-        self.logger.debug(f"Received {len(data)} bytes")
+        data = self.tls.receive_application_data()
+        self.logger.debug(f"Received decrypted data: {len(data)} bytes")
         return data
 
     def close(self):
@@ -96,9 +111,47 @@ class Client:
         #receive server hello done
         self.tls.receive_server_hello_done()
 
-        
+        # send client certificate
+        self.tls.send_client_certificate(self.certificate)
+        print("5")
+        # send client key exchange
+        premaster_secret = self.tls.send_rsa_client_key_exchange(server_signing_key, self.certificate.private_key)
+        # print("5")
 
-    # def dhe_handshake(self, random):
-    #     """Perform DHE handshake"""
-    #     # Placeholder for DHE handshake logic
-    #     pass
+        # send certificate verify
+        self.tls.send_certificate_verify(self.certificate.private_key)
+
+        # send change cipher spec
+        self.tls.send_change_cipher_spec()
+
+    def dhe_handshake(self, client_random, server_random):
+        """Perform DHE handshake"""
+        # Placeholder for DHE handshake logic
+        server_certificate = self.tls.receive_server_certificate()
+        valid, server_signing_key = self.tls.verify_certificate(server_certificate)
+        if not valid:
+            raise Exception("Invalid server certificate")
+        
+        # receive server key exchange
+
+        parameters, server_dhe_public_key = self.tls.receive_server_key_exchange_dhe(server_signing_key)
+        # receive server certificate request
+        self.tls.receive_certificate_request()
+        #receive server hello done
+        self.tls.receive_server_hello_done()
+
+        # send client certificate
+        self.tls.send_client_certificate(self.certificate)
+        print("5")
+        # send client key exchange
+        premaster_secret = self.tls.send_client_key_exchange_dhe(parameters)
+        # print("5")
+
+        # send certificate verify
+        self.tls.send_certificate_verify(self.certificate.private_key)
+
+        # send change cipher spec
+        self.tls.send_change_cipher_spec()
+
+
+
