@@ -3,9 +3,10 @@ import logging
 from typing import Tuple, Optional
 
 class TCP:
-    def __init__(self, host, port):
+    def __init__(self, host, port, is_server=False):
         self.host = host
         self.port = port
+        self.is_server = is_server
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.connections = {}  # Store multiple client connections
         
@@ -43,29 +44,18 @@ class TCP:
         return client_sock, client_addr
     
     def send(self, data: bytes, connection_id: Optional[int] = None):
-        """Send data to specific client or through client socket"""
-        if connection_id and connection_id in self.connections:
-            self.connections[connection_id]['socket'].sendall(data)
-            self.logger.info(f"Server sent {len(data)} bytes to client {connection_id}")
+        """Send data over TCP connection"""
+        if connection_id is not None:
+            self.connections[connection_id]['socket'].send(data)
         else:
-            self.socket.sendall(data)
-            self.logger.info(f"Client sent {len(data)} bytes")
+            self.socket.send(data)
 
-    def receive(self, expected_length=None, connection_id: Optional[int] = None) -> bytes:
-        """Receive data from specific client or through client socket"""
-        data = b""
-        receive_socket = (self.connections[connection_id]['socket'] 
-                         if connection_id in self.connections 
-                         else self.socket)
-
-        while expected_length is None or len(data) < expected_length:
-            chunk = receive_socket.recv(4096 if expected_length is None 
-                                      else expected_length - len(data))
-            if not chunk:
-                break
-            data += chunk
-
-        self.logger.info(f"Received {len(data)} bytes")
+    def receive(self, length: int, connection_id: Optional[int] = None) -> bytes:
+        """Receive exact number of bytes"""
+        if connection_id is not None:
+            data = self.connections[connection_id]['socket'].recv(length)
+        else:
+            data = self.socket.recv(length)
         return data
 
     def close_connection(self, connection_id: int):

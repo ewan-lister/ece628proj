@@ -28,6 +28,9 @@ class Client:
         self.supported_suite = supported_suite
         self.logger = logging.getLogger('Client')
         
+        # Only log connection once
+        self.logger.info(f"Connecting to {host}:{port}")
+
         # Initialize client certificate
         self.certificate = Certificate()
         self.certificate.generate_keys()
@@ -41,16 +44,13 @@ class Client:
         try:
             # Step 1: Establish TCP connection
             self.tcp.connect()
-            self.logger.info("TCP connection established")
 
             # Step 2: Initialize TLS instance and perform handshake
             self.client_random = self._generate_client_random()
             self.tls = TLS(self.tcp,supported_suites=self.supported_suite)  # or DHE_SUITE
             
             # Start TLS handshake
-            print("Do we reach this point?")
             self.tls.send_client_hello(self.client_random)
-            print("2")
             self.logger.info("TLS handshake initiated")
 
             # Receive and process server response
@@ -113,10 +113,8 @@ class Client:
 
         # send client certificate
         self.tls.send_client_certificate(self.certificate)
-        print("5")
         # send client key exchange
         premaster_secret = self.tls.send_rsa_client_key_exchange(server_signing_key, self.certificate.private_key)
-        # print("5")
 
         # send certificate verify
         self.tls.send_certificate_verify(self.certificate.private_key)
@@ -142,7 +140,6 @@ class Client:
 
         # send client certificate
         self.tls.send_client_certificate(self.certificate)
-        print("5")
         # send client key exchange
         premaster_secret = self.tls.send_client_key_exchange_dhe(parameters)
         # print("5")

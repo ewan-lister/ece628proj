@@ -39,7 +39,7 @@ class TLS:
                  supported_suites: Optional[list] = None):
         self.tcp = tcp_connection
         self.connection_id = connection_id
-        self.logger = logging.getLogger(__name__)
+        self.logger = logging.getLogger("TLS")
         self.chosen_cipher = None
         self.client_random = None
         self.server_random = None
@@ -49,9 +49,6 @@ class TLS:
 
     def send_handshake_message(self, handshake_type, message):
         """Send TLS handshake message"""
-        msg_name = self.HANDSHAKE_TYPES.get(handshake_type, f"Unknown({handshake_type})")
-        self.logger.info(f"Sending {msg_name}")
-        self.logger.debug(f"- Length: {len(message)}")
         # Create the full handshake message
         header = struct.pack("!B3s", handshake_type, len(message).to_bytes(3, 'big'))
         full_message = header + message
@@ -59,88 +56,78 @@ class TLS:
         # Store for CertificateVerify
         self.handshake_messages.extend(full_message)
         
+        # Send the message
         version = (3, 3)  # TLS 1.2
         content_type = 22  # Handshake type
         self.send_tls_record(content_type, version, full_message)
+        
+        # Log after successful send
+        msg_name = self.HANDSHAKE_TYPES.get(handshake_type, f"Unknown({handshake_type})")
+        self.logger.info(f"Sent {msg_name}")
+        self.logger.debug(f"- Length: {len(message)}")
 
     def receive_handshake_message(self, expected_type: int = None) -> tuple:
         """Receive and parse TLS handshake message"""
         content_type, version, payload = self.receive_tls_record()
         
-        if (content_type != 22):  # Handshake type
-            raise ValueError(f"Unexpected record type: {content_type}")
+        if content_type != 22:  # Handshake type
+            raise ValueError(f"Expected handshake message (type 22), got type {content_type}")
         
         # Parse handshake header
-        if (len(payload) < 4):
+        if len(payload) < 4:
             raise ValueError("Handshake message too short")
         
         msg_type = payload[0]
         msg_len = int.from_bytes(payload[1:4], 'big')
         
+        # Verify expected type
         msg_name = self.HANDSHAKE_TYPES.get(msg_type, f"Unknown({msg_type})")
-        if (expected_type is not None and msg_type != expected_type):
+        if expected_type is not None and msg_type != expected_type:
             expected_name = self.HANDSHAKE_TYPES.get(expected_type, f"Unknown({expected_type})")
             raise ValueError(f"Expected {expected_name}, got {msg_name}")
         
         # Verify message length
-        if (len(payload) - 4 != msg_len):
+        if len(payload) - 4 != msg_len:
             raise ValueError(f"Message length mismatch: expected {msg_len}, got {len(payload)-4}")
         
-        # Extract message data (skip header)
+        # Extract message data
         msg_data = payload[4:]
         
-        self.logger.info(f"Received {msg_name}")
-        self.logger.debug(f"- Length: {msg_len}")
-        
-        # Store the full message for CertificateVerify
+        # Store the full message
         full_message = struct.pack("!B3s", msg_type, len(msg_data).to_bytes(3, 'big')) + msg_data
         self.handshake_messages.extend(full_message)
+        
+        # Log after successful processing
+        self.logger.info(f"Received {msg_name}")
+        self.logger.debug(f"- Length: {msg_len}")
         
         return msg_type, msg_data
 
     def send_tls_record(self, content_type: int, version: tuple, payload: bytes):
-        """Send TLS record
-        Args:
-            content_type (int): Record type (e.g., 22 for Handshake)
-            version (tuple): Protocol version as (major, minor)
-            payload (bytes): Record payload
-        """
-        if isinstance(payload, str):
-            payload = payload.encode('utf-8')
-            
-        # Pack header: content_type (1 byte), version (2 bytes), length (2 bytes)
+        """Send TLS record"""
         record = struct.pack('!BHH', 
-            content_type,      # 1 byte (Content Type)
-            (version[0] << 8) | version[1],  # 2 bytes (TLS Version)
-            len(payload)       # 2 bytes (Payload Length)
-        ) 
-        record = record + payload
+            content_type,
+            (version[0] << 8) | version[1],
+            len(payload)
+        ) + payload
         self.tcp.send(record, self.connection_id)
+        self.logger.debug(f"Sent {len(record)} bytes")
 
     def receive_tls_record(self):
-        """Receive TLS record using connection ID if server
-        Returns:
-            tuple: (content_type, version, payload)
-            - content_type (int): Record type (e.g., 22 for Handshake)
-            - version (tuple): Protocol version as (major, minor)
-            - payload (bytes): Record payload
-        """
-        # Read TLS header (5 bytes)
+        """Receive TLS record"""
         header = self.tcp.receive(5, self.connection_id)
-        if (len(header) < 5):
+        if len(header) < 5:
             raise ConnectionError("Incomplete TLS header received")
 
-        # Unpack header components
         content_type = header[0]
         version = (header[1], header[2])
         length = int.from_bytes(header[3:5], byteorder='big')
 
-        # Receive payload
         payload = self.tcp.receive(length, self.connection_id)
-        if (len(payload) < length):
+        if len(payload) < length:
             raise ConnectionError(f"Incomplete payload received: {len(payload)} < {length}")
 
-        self.logger.info(f"Received TLS record (type {content_type}, length {length})")
+        self.logger.debug(f"Received TLS record type {content_type} ({length} bytes)")
         return content_type, version, payload
     
     # handshake methods
@@ -209,7 +196,7 @@ class TLS:
         cipher_suites = struct.pack("!H", len(supported_suite_bytes)) + supported_suite_bytes
         
         # Debug print to verify format
-        print(f"Cipher suites (hex): {cipher_suites.hex()}")
+        #print(f"Cipher suites (hex): {cipher_suites.hex()}")
         
         # Compression Methods (null only)
         compression = struct.pack("!BB", 1, 0)
@@ -758,12 +745,12 @@ class TLS:
             # Load the received certificate
             cert = x509.load_der_x509_certificate(cert_bytes)
             
-            # Basic certificate checks
-            now = datetime.datetime.utcnow()
-            if (now < cert.not_valid_before):
+            # Basic certificate checks using UTC-aware methods
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if now < cert.not_valid_before_utc:
                 self.logger.error("Certificate not yet valid")
                 return False, None
-            if (now > cert.not_valid_after):
+            if now > cert.not_valid_after_utc:
                 self.logger.error("Certificate has expired")
                 return False, None
                 
@@ -968,58 +955,35 @@ class TLS:
             raise
 
     def derive_keys(self, is_client: bool):
-        self.logger.info("Deriving session keys")
-        """Derive session keys from premaster secret and random values
-        Args:
-            is_client (bool): True if running on client side, False for server
-        """
+        """Derive session keys from premaster secret and random values"""
         if not all([self.premaster_secret, self.client_random, self.server_random]):
             raise ValueError("Missing secrets for key derivation")
-        
-        # First derive master secret (48 bytes)
+
+        # First derive master secret
         label = b"master secret"
         seed = self.client_random + self.server_random
         self.master_secret = self._prf(self.premaster_secret, label, seed, 48)
-        
+
         # Then derive key block
         label = b"key expansion"
-        seed = self.server_random + self.client_random  # Note order change
-        key_block = self._prf(self.master_secret, label, seed, 160)  # 32+32+32+32+16+16 = 160
-        
-        # Split key block into individual keys
+        seed = self.server_random + self.client_random
+        key_block = self._prf(self.master_secret, label, seed, 160)
+
+        # Split and assign keys
         offset = 0
-        client_mac_key = key_block[offset:offset+32]
-        offset += 32
-        server_mac_key = key_block[offset:offset+32]
-        offset += 32
-        client_write_key = key_block[offset:offset+32]
-        offset += 32
-        server_write_key = key_block[offset:offset+32]
-        offset += 32
-        client_write_iv = key_block[offset:offset+16]
-        offset += 16
-        server_write_iv = key_block[offset:offset+16]
-        
-        # Assign write/read keys based on whether we're client or server
-        if is_client:
-            self.write_mac_key = client_mac_key
-            self.read_mac_key = server_mac_key
-            self.write_key = client_write_key
-            self.read_key = server_write_key
-            self.write_iv = client_write_iv
-            self.read_iv = server_write_iv
-        else:
-            self.write_mac_key = server_mac_key
-            self.read_mac_key = client_mac_key
-            self.write_key = server_write_key
-            self.read_key = client_write_key
-            self.write_iv = server_write_iv
-            self.read_iv = client_write_iv
-        
-        self.logger.debug("Derived session keys:")
+        self.write_mac_key = key_block[offset:offset+32] if is_client else key_block[offset+32:offset+64]
+        self.read_mac_key = key_block[offset+32:offset+64] if is_client else key_block[offset:offset+32]
+        offset += 64
+        self.write_key = key_block[offset:offset+32] if is_client else key_block[offset+32:offset+64]
+        self.read_key = key_block[offset+32:offset+64] if is_client else key_block[offset:offset+32]
+        offset += 64
+        self.write_iv = key_block[offset:offset+16] if is_client else key_block[offset+16:offset+32]
+        self.read_iv = key_block[offset+16:offset+32] if is_client else key_block[offset:offset+16]
+
+        # Log after successful derivation
+        self.logger.info("Session keys derived successfully")
         self.logger.debug(f"- Master secret length: {len(self.master_secret)}")
-        self.logger.debug(f"- Write key length: {len(self.write_key)}")
-        self.logger.debug(f"- Read key length: {len(self.read_key)}")
+        self.logger.debug(f"- Write/Read key length: {len(self.write_key)}")
 
     def send_finished(self):
         """Send Finished message
