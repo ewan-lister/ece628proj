@@ -27,7 +27,7 @@ class SslServer: public Ssl {
 
   void handleErrors(const std::string& msg);
 
- const BIGNUM* dh_pub_key;
+ // const BIGNUM* dh_pub_key;
  char* cert_file_contents;
 
  private:
@@ -38,8 +38,8 @@ class SslServer: public Ssl {
   // CryptoPP::Integer dh_p_;
   // CryptoPP::Integer dh_q_;
   // CryptoPP::Integer dh_g_;
-  DH* dh;
-  const BIGNUM* dh_priv_key; // pub_key is in public field
+  // DH* dh;
+  // const BIGNUM* dh_priv_key; // pub_key is in public field
 };
 
 #endif // SSL_SERVER_H

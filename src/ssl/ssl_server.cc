@@ -17,7 +17,6 @@
 #include "logger.h"
 #include "utils.h"
 #include "ssl_handshake.h"
-#include <openssl/dh.h> // have to homebrew install openssl to use this
 #include <openssl/bn.h>
 #include <vector>
 #include <unistd.h>
@@ -90,6 +89,7 @@ Ssl *SslServer::accept() {
     if (this->closed_) {
         return NULL;
     }
+    uint8_t key_exchange;
 
     std::vector<char*> hs_messages;
     TCP *cxn = this->tcp_->socket_accept();
@@ -115,6 +115,19 @@ Ssl *SslServer::accept() {
     std::vector<uint8_t> cipher_suites;
     unpack_client_hello(client_hello, client_version, client_random, cipher_suites);
 
+
+    uint8_t cipher_suite = cipher_suites[0];
+
+    if (cipher_suite == 0x35) {
+        key_exchange = Ssl::KE_DHE;
+    } else if (cipher_suite == 0x2F) {
+        key_exchange = Ssl::KE_RSA;
+    } else {
+        cerr << "Invalid cipher suite" << endl;
+        return NULL;
+    }
+
+
     // 2. Send server Hello
     char *server_hello = (char *) malloc(1024);
     char *server_random;
@@ -134,20 +147,6 @@ Ssl *SslServer::accept() {
     }
 
     /**
-     * Server Key Exchange message contains params signed with private key
-     * key exchange params, signature
-     **/
-    // 3. Send Server Key Exchange.
-
-
-
-    /**
-     * Certificate request containing certificate types, signature algos,
-     * cert authorities
-     **/
-    // 4. Send Certificate Request.
-
-    /**
      *  Send Certificate
      **/
     // 5. Send Certificate
@@ -160,6 +159,35 @@ Ssl *SslServer::accept() {
     }
 
     /**
+     * Server Key Exchange message contains params signed with private key
+     * key exchange params, signature
+     **/
+    // 3. Send Server Key Exchange.
+    CryptoPP::DH* out_dh;
+    CryptoPP::SecByteBlock server_public_dhe_key, server_private_dhe_key;
+    if (key_exchange == Ssl::KE_DHE) {
+        this->logger_->log("Server Key Exchange");
+        std::vector<unsigned char> server_key_exchange = generate_dhe_server_key_exchange(
+            client_random, server_random, private_key_, out_dh, server_private_dhe_key, server_public_dhe_key
+        );
+        char* server_key_exchange_ptr = reinterpret_cast<char*>(server_key_exchange.data());
+        hs_messages.push_back(server_key_exchange_ptr);
+        if (send_server_key_exchange(new_ssl_cxn, server_key_exchange_ptr, server_key_exchange.size()) != 0) {
+            cerr << "Error sending server key exchange" << endl;
+            return NULL;
+        }
+
+        // print_buffer_hex(server_key_exchange, server_key_exchange.size());
+    }
+
+    /**
+     * Certificate request containing certificate types, signature algos,
+     * cert authorities
+     **/
+    // 4. Send Certificate Request.
+
+
+    /**
      *  Send SERVER_HELLO_DONE
      **/
     // 6. Send Server Hello Done
@@ -169,6 +197,7 @@ Ssl *SslServer::accept() {
     }
 
     // 7. Receive Certificate and verify
+
 
     /**
      * Receive CLIENT_KEY_EXCHANGE
@@ -181,16 +210,35 @@ Ssl *SslServer::accept() {
         cerr << "Error receiving client key exchange" << endl;
         return NULL;
     }
-
     hs_messages.push_back(client_key_exchange);
-    char* encrypted_premaster_secret = (char*)malloc(1024*(sizeof(char)));
-    int len = unpack_client_key_exchange(client_key_exchange, encrypted_premaster_secret);
-    string premaster_secret;
-    string encrypted_premaster_secret_str(encrypted_premaster_secret, len);
-    rsa_decrypt(this->private_key_, &premaster_secret, encrypted_premaster_secret_str);
 
-    CryptoPP::SecByteBlock premaster_secret_block(
-        reinterpret_cast<const byte*>(premaster_secret.c_str()), 48);
+    CryptoPP::SecByteBlock premaster_secret_block;
+    if (key_exchange == 0x35) {
+        CryptoPP::SecByteBlock client_public_key;
+        unpack_client_key_exchange_dhe(client_key_exchange, client_public_key);
+
+        CryptoPP::SecByteBlock shared_secret(out_dh->AgreedValueLength());
+        if (!out_dh->Agree(shared_secret, server_private_dhe_key, client_public_key)) {
+            cerr << "Error agreeing on shared secret" << endl;
+            return NULL;
+        }
+        cout << "Server shared secret: " << format_key_data(shared_secret) << endl;
+        premaster_secret_block.Assign(shared_secret);
+    } else if (key_exchange == 0x2F) {
+        char* encrypted_premaster_secret = (char*)malloc(1024*(sizeof(char)));
+        int len = unpack_client_key_exchange(client_key_exchange, encrypted_premaster_secret);
+        string premaster_secret;
+        string encrypted_premaster_secret_str(encrypted_premaster_secret, len);
+        rsa_decrypt(this->private_key_, &premaster_secret, encrypted_premaster_secret_str);
+        premaster_secret_block.Assign(reinterpret_cast<const byte*>(premaster_secret.c_str()), 48);
+
+        free(encrypted_premaster_secret);
+    } else {
+        cout << "Client key exchange not supported" << endl;
+        return NULL;
+    }
+
+
     CryptoPP::SecByteBlock server_random_block(
             reinterpret_cast<const byte*>(server_random), 32);
     CryptoPP::SecByteBlock client_random_block(
@@ -210,6 +258,12 @@ Ssl *SslServer::accept() {
         cout << "Error generating keys" << endl;
         return NULL;
     }
+
+    cout << "Client master secret: " << format_key_data(master_secret) << endl;
+    cout << "Server write key: " << format_key_data(server_write_key) << endl;
+    cout << "Server write iv: " << format_key_data(server_write_iv) << endl;
+    cout << "Client write key: " << format_key_data(client_write_key) << endl;
+    cout << "Client write iv: " << format_key_data(client_write_iv) << endl;
 
     // 9. Receive Certificate Verify
 
@@ -252,7 +306,6 @@ Ssl *SslServer::accept() {
 
     free(client_hello);
     free(client_finished);
-    free(encrypted_premaster_secret);
     hs_messages.clear();
     free(server_hello);
     free(server_random);

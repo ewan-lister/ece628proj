@@ -1,5 +1,6 @@
 #include "crypto_adaptor.h"
 
+#include <dh.h>
 #include <iostream>
 #include <openssl/bn.h>
 #include <vector>
@@ -13,6 +14,7 @@
 #include "hmac.h"
 #include "secblock.h"
 #include "hex.h"
+#include "ssl_handshake.h"
 
 using namespace std;
 using namespace CryptoPP;
@@ -329,3 +331,232 @@ int TLS12_KDF_AES256(
     }
 }
 
+int derive_dhe_keys(
+    const CryptoPP::DH& dh,
+    const CryptoPP::SecByteBlock& private_key,
+    const CryptoPP::SecByteBlock& other_public_key,
+    const CryptoPP::SecByteBlock& client_random,
+    const CryptoPP::SecByteBlock& server_random,
+    CryptoPP::SecByteBlock& master_secret,
+    CryptoPP::SecByteBlock& client_write_key,
+    CryptoPP::SecByteBlock& server_write_key,
+    CryptoPP::SecByteBlock& client_write_iv,
+    CryptoPP::SecByteBlock& server_write_iv
+) {
+    try {
+        // Calculate shared secret
+        CryptoPP::SecByteBlock shared_secret(dh.AgreedValueLength());
+        if (!dh.Agree(shared_secret, private_key, other_public_key)) {
+            return -1;
+        }
+
+        // Use shared secret as premaster secret
+        CryptoPP::SecByteBlock premaster_secret(shared_secret);
+
+        // Derive master secret and keys using TLS 1.2 KDF
+        return TLS12_KDF_AES256(
+            premaster_secret,
+            client_random,
+            server_random,
+            master_secret,
+            client_write_key,
+            server_write_key,
+            client_write_iv,
+            server_write_iv
+        );
+    }
+    catch(const CryptoPP::Exception& e) {
+        std::cerr << "Key derivation failed: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+void append_integer(std::vector<unsigned char>& output, const Integer& i) {
+    size_t len = i.MinEncodedSize();
+
+    output.push_back((len >> 8) & 0xFF);
+    output.push_back(len & 0xFF);
+
+    size_t offset = output.size();
+    output.resize(offset + len);
+
+    i.Encode(output.data() + offset, len);
+}
+
+int generate_dhe_client_keypair(
+    const CryptoPP::Integer p,
+    const CryptoPP::Integer g,
+    CryptoPP::SecByteBlock& privKey,
+    CryptoPP::SecByteBlock& pubKey,
+    CryptoPP::DH& dh
+) {
+    CryptoPP::AutoSeededRandomPool rng;
+
+    // Initialize DH object with server's parameters
+    dh.AccessGroupParameters().Initialize(p, g);
+
+    // Generate client's keypair
+    dh.GenerateKeyPair(rng, privKey, pubKey);
+
+    return 0;
+}
+
+std::vector<unsigned char> serialize_dhe_params(
+    const CryptoPP::Integer& p,
+    const CryptoPP::Integer& g,
+    const CryptoPP::SecByteBlock& pubKey
+) {
+    std::vector<unsigned char> serialized_params;
+
+    // Append p, g
+    append_integer(serialized_params, p);
+    append_integer(serialized_params, g);
+
+    // Convert public key to Integer and append
+    CryptoPP::Integer pub;
+    pub.Decode(pubKey.BytePtr(), pubKey.SizeInBytes());
+    append_integer(serialized_params, pub);
+
+    return serialized_params;
+}
+
+std::vector<unsigned char> generate_dhe_server_key_exchange_signature(
+    const char* client_random,
+    const char* server_random,
+    std::vector<unsigned char> serialized_params,
+    const CryptoPP::RSA::PrivateKey server_key
+) {
+    CryptoPP::AutoSeededRandomPool rng;
+
+    // Create data to be signed
+    std::vector<unsigned char> data_to_sign;
+    const size_t random_size = 32;
+    data_to_sign.reserve(random_size * 2 + serialized_params.size());
+
+    data_to_sign.insert(data_to_sign.end(),
+        reinterpret_cast<const unsigned char*>(client_random),
+        reinterpret_cast<const unsigned char*>(client_random + random_size));
+    data_to_sign.insert(data_to_sign.end(),
+        reinterpret_cast<const unsigned char*>(server_random),
+        reinterpret_cast<const unsigned char*>(server_random + random_size));
+    data_to_sign.insert(data_to_sign.end(),
+        serialized_params.begin(), serialized_params.end());
+
+    // Sign the data
+    CryptoPP::RSASSA_PKCS1v15_SHA_Signer signer(server_key);
+    std::vector<unsigned char> signature(signer.MaxSignatureLength());
+    size_t sig_len = signer.SignMessage(
+        rng,
+        data_to_sign.data(),
+        data_to_sign.size(),
+        signature.data()
+    );
+    signature.resize(sig_len);
+
+    return signature;
+}
+
+std::vector<unsigned char> generate_dhe_server_key_exchange(
+    const char* client_random,
+    const char* server_random,
+    const CryptoPP::RSA::PrivateKey& server_key,
+    CryptoPP::DH*& out_dh,
+    SecByteBlock& privKey,
+    SecByteBlock& pubKey
+) {
+    if (!client_random || !server_random) {
+        throw std::invalid_argument("Invalid input parameters");
+    }
+
+    CryptoPP::AutoSeededRandomPool rng;
+
+    cout << "Begining to generate DHE keys" << endl;
+    // Create DH object with FFDHE2048 parameters from RFC 7919
+    CryptoPP::Integer p, q, g;
+    generate_pqg(p, q, g);
+    cout << "DH Parameter g: " << g << endl;
+    cout << "DH Parameter p: " << p << endl;
+
+    cout << "Initializing DHE keys" << endl;
+    // Initialize DH object with parameters
+    out_dh = new CryptoPP::DH();
+    out_dh->AccessGroupParameters().Initialize(p, g);
+
+    cout << "Generating key pair" << endl;
+    privKey.resize(out_dh->PrivateKeyLength());
+    pubKey.resize(out_dh->PublicKeyLength());
+    // Generate ephemeral key pair
+    out_dh->GenerateKeyPair(rng, privKey, pubKey);
+
+    // Serialize parameters and public key
+    std::vector<unsigned char> serialized_params = serialize_dhe_params(p, g, pubKey);
+
+    cout << "Signing DH parameters" << endl;
+    std::vector<unsigned char> signature = generate_dhe_server_key_exchange_signature(
+        client_random, server_random, serialized_params, server_key
+    );
+    cout << "Signature: " << endl;
+    print_buffer_hex(signature, signature.size());
+
+    // Assemble final message
+    std::vector<unsigned char> server_key_exchange;
+    server_key_exchange.reserve(serialized_params.size() + 4 + signature.size());
+
+    cout << "Creating Server Key Exchange message" << endl;
+    // Add DH parameters
+    server_key_exchange.insert(server_key_exchange.end(),
+        serialized_params.begin(), serialized_params.end());
+
+    // Add signature algorithm (0x0401 for RSA PKCS#1 + SHA-256)
+    server_key_exchange.push_back(0x04);
+    server_key_exchange.push_back(0x01);
+
+    // Add signature length and value
+    server_key_exchange.push_back((signature.size() >> 8) & 0xFF);
+    server_key_exchange.push_back(signature.size() & 0xFF);
+    server_key_exchange.insert(server_key_exchange.end(),
+        signature.begin(), signature.end());
+
+    return server_key_exchange;
+}
+
+int verify_dhe_server_key_exchange_signature(
+    const char* client_random,
+    const char* server_random,
+    const std::vector<unsigned char>& serialized_params,
+    const std::vector<unsigned char>& signature,
+    const CryptoPP::RSA::PublicKey& server_public_key
+) {
+    try {
+        // Recreate data that was signed
+        std::vector<unsigned char> data_to_verify;
+        const size_t random_size = 32;
+        data_to_verify.reserve(random_size * 2 + serialized_params.size());
+
+        // Add client random and server random
+        data_to_verify.insert(data_to_verify.end(),
+            reinterpret_cast<const unsigned char*>(client_random),
+            reinterpret_cast<const unsigned char*>(client_random + random_size));
+        data_to_verify.insert(data_to_verify.end(),
+            reinterpret_cast<const unsigned char*>(server_random),
+            reinterpret_cast<const unsigned char*>(server_random + random_size));
+
+        // Add serialized DH parameters
+        data_to_verify.insert(data_to_verify.end(),
+            serialized_params.begin(), serialized_params.end());
+
+        // Create verifier object
+        CryptoPP::RSASSA_PKCS1v15_SHA_Verifier verifier(server_public_key);
+
+        // Verify the signature
+        return verifier.VerifyMessage(
+            data_to_verify.data(),
+            data_to_verify.size(),
+            signature.data(),
+            signature.size()
+        ) ? 0 : -1;
+    } catch(const CryptoPP::Exception& e) {
+        std::cerr << "Signature verification failed: " << e.what() << std::endl;
+        return -1;
+    }
+}

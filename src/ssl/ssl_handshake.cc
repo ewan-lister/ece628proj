@@ -305,6 +305,10 @@ int send_server_hello(Ssl* cnx, char* hello, size_t length) {
     return send_record(cnx, Ssl::HS_SERVER_HELLO, Ssl::VER_99, hello, length);
 }
 
+int send_server_key_exchange(Ssl* cnx, char* data, size_t length) {
+    return send_record(cnx, Ssl::HS_SERVER_KEY_EXCHANGE, Ssl::VER_99, data, length);
+}
+
 int send_cert(Ssl* cnx, char* cert) {
     return send_record(cnx, Ssl::HS_CERTIFICATE, Ssl::VER_99, cert, strlen(cert));
 }
@@ -316,6 +320,11 @@ int send_cert_request(Ssl* cnx) {
 int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
     // cout << "Sending client key exchange. len: " << length << endl;
     return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
+}
+
+int send_client_key_exchange_dhe(Ssl* cnx, std::vector<unsigned char> data) {
+    // cout << "Sending client key exchange. len: " << length << endl;
+    return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, reinterpret_cast<char*>(data.data()), data.size());
 }
 
 int send_finished(Ssl *cnx, char *finished, size_t length) {
@@ -377,6 +386,10 @@ int recv_cert(Ssl* cnx, char*& data) {
 int recv_server_hello_done(Ssl* cnx, char* data) {
     // cout << "Received server hello done" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO_DONE, Ssl::VER_99);
+}
+
+int recv_server_key_exchange(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_SERVER_KEY_EXCHANGE, Ssl::VER_99);
 }
 
 int load_and_verify_certificate(char *&certificate, CryptoPP::RSA::PublicKey& cryptopp_key) {
@@ -536,6 +549,27 @@ int pack_client_key_exchange(char*& buffer, const char* data, size_t length) {
     return offset;
 }
 
+int pack_client_key_exchange_dhe(
+    const CryptoPP::SecByteBlock& client_public_key,
+    std::vector<unsigned char>& client_key_exchange
+) {
+    // Convert public key to Integer
+    CryptoPP::Integer pub;
+    pub.Decode(client_public_key.BytePtr(), client_public_key.SizeInBytes());
+
+    // Add length and value of public key
+    size_t len = pub.MinEncodedSize();
+    client_key_exchange.push_back((len >> 8) & 0xFF);
+    client_key_exchange.push_back(len & 0xFF);
+
+    size_t offset = client_key_exchange.size();
+    client_key_exchange.resize(offset + len);
+    pub.Encode(client_key_exchange.data() + offset, len);
+
+    return 0;
+}
+
+
 int unpack_client_key_exchange(char* buffer, char*& data) {
     size_t offset = 0;
 
@@ -551,6 +585,26 @@ int unpack_client_key_exchange(char* buffer, char*& data) {
 
     return total_length;
 }
+
+int unpack_client_key_exchange_dhe(char* buffer, CryptoPP::SecByteBlock& client_public_key) {
+    try {
+        // First 2 bytes are the length of the public key
+        size_t pub_len = ((static_cast<unsigned char>(buffer[0]) << 8) & 0xFF00) |
+                          (static_cast<unsigned char>(buffer[1]) & 0xFF);
+
+        // Resize the SecByteBlock to hold the public key
+        client_public_key.resize(pub_len);
+
+        // Copy the public key data
+        memcpy(client_public_key.data(), buffer + 2, pub_len);
+
+        return 0;
+    } catch(const CryptoPP::Exception& e) {
+        std::cerr << "Failed to unpack client key exchange: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
 
 
 int pack_client_hello(
@@ -681,6 +735,47 @@ int unpack_client_hello(
     for (size_t i = 0; i < cipher_suites_length; ++i) {
         cipher_suites.push_back(static_cast<uint8_t>(buffer[offset + i]));
     }
+
+    return 0;
+}
+
+int unpack_server_key_exchange(
+    char* buffer,
+    CryptoPP::Integer& p,
+    CryptoPP::Integer& g,
+    CryptoPP::SecByteBlock& pubKey,
+    std::vector<unsigned char>& signature
+) {
+    size_t offset = 0;
+    unsigned char* data = reinterpret_cast<unsigned char*>(buffer);
+
+    // Read p
+    size_t p_len = (data[offset] << 8) | data[offset + 1];
+    offset += 2;
+    p.Decode(data + offset, p_len);
+    offset += p_len;
+
+    // Read g
+    size_t g_len = (data[offset] << 8) | data[offset + 1];
+    offset += 2;
+    g.Decode(data + offset, g_len);
+    offset += g_len;
+
+    // Read public key
+    size_t pub_len = (data[offset] << 8) | data[offset + 1];
+    offset += 2;
+    pubKey.resize(pub_len);
+    memcpy(pubKey.data(), data + offset, pub_len);
+    offset += pub_len;
+
+    // Read signature algorithm (skip 2 bytes)
+    offset += 2;
+
+    // Read signature
+    size_t sig_len = (data[offset] << 8) | data[offset + 1];
+    offset += 2;
+    signature.resize(sig_len);
+    memcpy(signature.data(), data + offset, sig_len);
 
     return 0;
 }

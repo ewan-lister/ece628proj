@@ -28,7 +28,11 @@ int send_client_hello(Ssl* cnx, char* data, size_t length);
 
 int send_client_key_exchange(Ssl* cnx, char*& data, size_t length);
 
+int send_client_key_exchange_dhe(Ssl* cnx, std::vector<unsigned char> data);
+
 int send_server_hello(Ssl* cnx, char* random, size_t length);
+
+int send_server_key_exchange(Ssl* cnx, char* data, size_t length);
 
 int send_cert(Ssl* cnx, char* cert);
 
@@ -46,6 +50,8 @@ int recv_cert(Ssl* cnx, char*& data);
 
 int recv_server_hello_done(Ssl* cnx, char* data);
 
+int recv_server_key_exchange(Ssl* cnx, char*& data);
+
 int recv_finished(Ssl* cnx, char*& data);
 
 // Message packing
@@ -53,7 +59,11 @@ size_t store_byte_at_offset(char* buffer, size_t offset, uint8_t value);
 
 int pack_client_key_exchange(char*& buffer, const char* pre_master_secret, size_t length);
 
+int pack_client_key_exchange_dhe(const CryptoPP::SecByteBlock& client_public_key, std::vector<unsigned char>& client_key_exchange);
+
 int unpack_client_key_exchange(char* buffer, char*& data);
+
+int unpack_client_key_exchange_dhe(char* buffer, CryptoPP::SecByteBlock& client_public_key);
 
 int pack_client_hello(
     char*& buffer,
@@ -83,9 +93,19 @@ int unpack_server_hello(
     uint8_t& selected_suite
 );
 
+int unpack_server_key_exchange(
+    char* buffer,
+    CryptoPP::Integer& p,
+    CryptoPP::Integer& g,
+    CryptoPP::SecByteBlock& pubKey,
+    std::vector<unsigned char>& signature
+);
+
 int pack_client_key_exchange(char*& buffer, const char* pre_master_secret, size_t length);
 
 void print_buffer_hex(char* buffer, size_t length);
+
+void print_buffer_hex(std::vector<unsigned char> buffer, size_t length);
 
 int generate_premaster_secret(std::string& premaster_secret);
 
@@ -107,6 +127,5 @@ int verify_tls_finished_msg(
     size_t received_size,
     bool is_verifying_client
 );
-
 
 #endif //SSL_HANDSHAKE_H

@@ -1,6 +1,7 @@
 #ifndef CRYPTO_ADAPTOR_H
 #define CRYPTO_ADAPTOR_H
 
+#include <dh.h>
 #include <openssl/bn.h>
 
 #include "string.h"
@@ -39,6 +40,37 @@ int TLS12_KDF_AES256(
     CryptoPP::SecByteBlock& server_write_key,
     CryptoPP::SecByteBlock& client_write_iv,
     CryptoPP::SecByteBlock& server_write_iv
+);
+
+std::vector<unsigned char> serialize_dhe_params(
+    const CryptoPP::Integer& p,
+    const CryptoPP::Integer& g,
+    const CryptoPP::SecByteBlock& pubKey
+);
+
+int generate_dhe_client_keypair(
+    const CryptoPP::Integer p,
+    const CryptoPP::Integer g,
+    CryptoPP::SecByteBlock& privKey,
+    CryptoPP::SecByteBlock& pubKey,
+    CryptoPP::DH& dh
+);
+
+std::vector<unsigned char> generate_dhe_server_key_exchange(
+    const char* client_random,
+    const char* server_random,
+    const CryptoPP::RSA::PrivateKey& server_key,
+    CryptoPP::DH*& out_dh,
+    CryptoPP::SecByteBlock& privKey,
+    CryptoPP::SecByteBlock& pubKey
+);
+
+int verify_dhe_server_key_exchange_signature(
+    const char* client_random,
+    const char* server_random,
+    const std::vector<unsigned char>& serialized_params,
+    const std::vector<unsigned char>& signature,
+    const CryptoPP::RSA::PublicKey& server_public_key
 );
 
 CryptoPP::Integer convert_bignum_to_integer(BIGNUM* bn);
