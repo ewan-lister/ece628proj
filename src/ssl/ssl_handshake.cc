@@ -736,7 +736,7 @@ int unpack_client_hello(
         cipher_suites.push_back(static_cast<uint8_t>(buffer[offset + i]));
     }
 
-    return 0;
+    return total_length;
 }
 
 int unpack_server_key_exchange(
@@ -777,7 +777,7 @@ int unpack_server_key_exchange(
     signature.resize(sig_len);
     memcpy(signature.data(), data + offset, sig_len);
 
-    return 0;
+    return offset + sig_len;
 }
 
 void print_buffer_hex(char* buffer, size_t length) {
@@ -861,15 +861,23 @@ std::string format_key_data(const CryptoPP::SecByteBlock& block) {
 }
 
 std::vector<unsigned char> compute_tls_finished_msg(
-    const std::vector<char*>& handshake_messages,
+    const std::vector<pair<char*, size_t> >& handshake_messages,
     const unsigned char* master_secret,
     bool is_client,
     size_t finished_size
 ) {
+    // cout << "Starting finished message computation" << endl;
+    // cout << "Master secret used: " << endl;
+    // print_buffer_hex((unsigned char*)master_secret, 48);
+    // cout << "Handshake messages: " << endl;
     // Step 1: Concatenate all handshake messages
     size_t total_length = 0;
-    for (const char* message : handshake_messages) {
-        total_length += strlen(message);
+    uint8_t counter = 0;
+    for (pair<char*, size_t> message : handshake_messages) {
+        // cout << "Message " << (int)counter << ": " << endl;
+        // print_buffer_hex(message.first, message.second);
+        total_length += message.second;
+        // counter++;
     }
 
     const char* finished_label =
@@ -878,9 +886,9 @@ std::vector<unsigned char> compute_tls_finished_msg(
     unsigned char* handshake_data = new unsigned char[total_length];
     size_t current_pos = 0;
 
-    for (const char* message : handshake_messages) {
-        size_t msg_len = strlen(message);
-        std::memcpy(handshake_data + current_pos, message, msg_len);
+    for (pair<char*, size_t> message : handshake_messages) {
+        size_t msg_len = message.second;
+        std::memcpy(handshake_data + current_pos, message.first, msg_len);
         current_pos += msg_len;
     }
 
@@ -915,11 +923,13 @@ std::vector<unsigned char> compute_tls_finished_msg(
     HMAC_Final(hmac_ctx, finished_msg.data(), &out_len);
     HMAC_CTX_free(hmac_ctx);
 
+    // cout << "Finished message: " << endl;
+    // print_buffer_hex(finished_msg, 12);
     return finished_msg;
 }
 
 int verify_tls_finished_msg(
-    const std::vector<char*>& handshake_messages,
+    const std::vector<pair<char*, size_t> >& handshake_messages,
     const unsigned char* master_secret,
     const unsigned char* received_finished,
     size_t received_size, // 12 bytes
@@ -933,8 +943,15 @@ int verify_tls_finished_msg(
         received_size
     );
 
+    // cout << "Verification master secret: " << endl;
+    // print_buffer_hex((unsigned char*)master_secret, 48);
+    // cout << "Expected Finished message: " << endl;
+    // print_buffer_hex(expected_finished, 12);
+    // cout << "Received Finished message: " << endl;
+    print_buffer_hex((unsigned char*)received_finished, 12);
     // Compare the expected and received Finished messages
     if (expected_finished.size() != received_size) {
+        cout << "Received Finished message does not match expected size" << endl;
         return -1;
     }
 
@@ -965,8 +982,8 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
     const char* client_random,
     const char* server_random,
     const CryptoPP::RSA::PrivateKey& server_key,
-    DH** out_dh)
-{
+    DH** out_dh
+) {
     // Parameter validation
     if (!client_random || !server_random || !out_dh) {
         throw std::invalid_argument("Invalid input parameters");
@@ -1049,5 +1066,3 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
 
     return server_key_exchange;
 }
-
-

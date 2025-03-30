@@ -396,6 +396,8 @@ int generate_dhe_client_keypair(
     dh.AccessGroupParameters().Initialize(p, g);
 
     // Generate client's keypair
+    privKey.resize(dh.PrivateKeyLength());
+    pubKey.resize(dh.PublicKeyLength());
     dh.GenerateKeyPair(rng, privKey, pubKey);
 
     return 0;
@@ -474,15 +476,13 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
     // Create DH object with FFDHE2048 parameters from RFC 7919
     CryptoPP::Integer p, q, g;
     generate_pqg(p, q, g);
-    cout << "DH Parameter g: " << g << endl;
-    cout << "DH Parameter p: " << p << endl;
+    // cout << "DH Parameter g: " << g << endl;
+    // cout << "DH Parameter p: " << p << endl;
 
-    cout << "Initializing DHE keys" << endl;
     // Initialize DH object with parameters
     out_dh = new CryptoPP::DH();
     out_dh->AccessGroupParameters().Initialize(p, g);
 
-    cout << "Generating key pair" << endl;
     privKey.resize(out_dh->PrivateKeyLength());
     pubKey.resize(out_dh->PublicKeyLength());
     // Generate ephemeral key pair
@@ -491,18 +491,16 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
     // Serialize parameters and public key
     std::vector<unsigned char> serialized_params = serialize_dhe_params(p, g, pubKey);
 
-    cout << "Signing DH parameters" << endl;
     std::vector<unsigned char> signature = generate_dhe_server_key_exchange_signature(
         client_random, server_random, serialized_params, server_key
     );
-    cout << "Signature: " << endl;
-    print_buffer_hex(signature, signature.size());
+    // cout << "Signature: " << endl;
+    // print_buffer_hex(signature, signature.size());
 
     // Assemble final message
     std::vector<unsigned char> server_key_exchange;
     server_key_exchange.reserve(serialized_params.size() + 4 + signature.size());
 
-    cout << "Creating Server Key Exchange message" << endl;
     // Add DH parameters
     server_key_exchange.insert(server_key_exchange.end(),
         serialized_params.begin(), serialized_params.end());

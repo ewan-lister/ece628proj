@@ -105,6 +105,8 @@ int pack_client_key_exchange(char*& buffer, const char* pre_master_secret, size_
 
 void print_buffer_hex(char* buffer, size_t length);
 
+void print_buffer_hex(unsigned char* buffer, size_t length);
+
 void print_buffer_hex(std::vector<unsigned char> buffer, size_t length);
 
 int generate_premaster_secret(std::string& premaster_secret);
@@ -114,14 +116,14 @@ void print_RSA_public_key(const CryptoPP::RSA::PublicKey& key);
 std::string format_key_data(const CryptoPP::SecByteBlock& block);
 
 std::vector<unsigned char> compute_tls_finished_msg(
-    const std::vector<char*>& handshake_messages,
+    const std::vector<std::pair<char*, size_t> >& handshake_messages,
     const unsigned char* master_secret,
     bool is_client,
     size_t finished_size
 );
 
 int verify_tls_finished_msg(
-    const std::vector<char*>& handshake_messages,
+    const std::vector<std::pair<char*, size_t> >& handshake_messages,
     const unsigned char* master_secret,
     const unsigned char* received_finished,
     size_t received_size,

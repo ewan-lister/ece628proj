@@ -91,7 +91,7 @@ Ssl *SslServer::accept() {
     }
     uint8_t key_exchange;
 
-    std::vector<char*> hs_messages;
+    std::vector<pair<char*, size_t> > hs_messages;
     TCP *cxn = this->tcp_->socket_accept();
     if (cxn == NULL) {
         cerr << "error when accepting" << endl;
@@ -109,11 +109,12 @@ Ssl *SslServer::accept() {
         cerr << "Could not receive Client Hello" << endl;
         return NULL;
     }
-    hs_messages.push_back(client_hello);
     uint16_t client_version;
     char client_random[32]; // Validate length of the client random
     std::vector<uint8_t> cipher_suites;
-    unpack_client_hello(client_hello, client_version, client_random, cipher_suites);
+    size_t len = unpack_client_hello(client_hello, client_version, client_random, cipher_suites);
+    // cout << "Server: Appending client hello message: " << string(client_hello, len+2) << endl;
+    hs_messages.push_back(make_pair(client_hello, len+2)); // +2 for length byte
 
 
     uint8_t cipher_suite = cipher_suites[0];
@@ -140,7 +141,8 @@ Ssl *SslServer::accept() {
     );
 
     this->logger_->log(("Server Hello: "));
-    hs_messages.push_back(server_hello);
+    // cout << "Server: Appending server hello message: " << string(server_hello, server_hello_length) << endl;
+    hs_messages.push_back(make_pair(server_hello, server_hello_length));
     if (send_server_hello(new_ssl_cxn, server_hello, server_hello_length) != 0) {
         cout << "Could not send Server Hello" << endl;
         return NULL;
@@ -152,7 +154,8 @@ Ssl *SslServer::accept() {
     // 5. Send Certificate
     CryptoPP::RSA::PublicKey cert_public_key;
     this->logger_->log("Certificate: ");
-    hs_messages.push_back(cert_file_contents);
+    cout << "Server: Certificate message length: " << strlen(cert_file_contents) << endl;
+    hs_messages.push_back(make_pair(cert_file_contents, strlen(cert_file_contents)));
     if (send_cert(new_ssl_cxn, cert_file_contents) != 0) {
         cerr << "Error sending certificate file" << endl;
         return NULL;
@@ -165,13 +168,18 @@ Ssl *SslServer::accept() {
     // 3. Send Server Key Exchange.
     CryptoPP::DH* out_dh;
     CryptoPP::SecByteBlock server_public_dhe_key, server_private_dhe_key;
+    std::vector<unsigned char> server_key_exchange;
+    char* server_key_exchange_ptr;
     if (key_exchange == Ssl::KE_DHE) {
         this->logger_->log("Server Key Exchange");
-        std::vector<unsigned char> server_key_exchange = generate_dhe_server_key_exchange(
+        server_key_exchange = generate_dhe_server_key_exchange(
             client_random, server_random, private_key_, out_dh, server_private_dhe_key, server_public_dhe_key
         );
-        char* server_key_exchange_ptr = reinterpret_cast<char*>(server_key_exchange.data());
-        hs_messages.push_back(server_key_exchange_ptr);
+
+        server_key_exchange_ptr = reinterpret_cast<char*>(server_key_exchange.data());
+        // cout << "Server: Appending Server Key exchange message: " << endl;
+        // print_buffer_hex(server_key_exchange_ptr, server_key_exchange.size());
+        hs_messages.push_back(make_pair(server_key_exchange_ptr, server_key_exchange.size()));
         if (send_server_key_exchange(new_ssl_cxn, server_key_exchange_ptr, server_key_exchange.size()) != 0) {
             cerr << "Error sending server key exchange" << endl;
             return NULL;
@@ -210,28 +218,33 @@ Ssl *SslServer::accept() {
         cerr << "Error receiving client key exchange" << endl;
         return NULL;
     }
-    hs_messages.push_back(client_key_exchange);
-
     CryptoPP::SecByteBlock premaster_secret_block;
-    if (key_exchange == 0x35) {
+    if (key_exchange == KE_DHE) {
+        cout << "Receiving DHE client key exchange" << endl;
         CryptoPP::SecByteBlock client_public_key;
+        size_t pub_len = ((static_cast<unsigned char>(client_key_exchange[0]) << 8) & 0xFF00) |
+                          (static_cast<unsigned char>(client_key_exchange[1]) & 0xFF);
         unpack_client_key_exchange_dhe(client_key_exchange, client_public_key);
+        // cout << "Server: Appending DHE Client key exchange message: " << string(client_key_exchange, pub_len+2) << endl;
+        hs_messages.push_back(make_pair(client_key_exchange, pub_len+2)); // +2 for length byte
 
         CryptoPP::SecByteBlock shared_secret(out_dh->AgreedValueLength());
         if (!out_dh->Agree(shared_secret, server_private_dhe_key, client_public_key)) {
             cerr << "Error agreeing on shared secret" << endl;
             return NULL;
         }
-        cout << "Server shared secret: " << format_key_data(shared_secret) << endl;
+        // cout << "Server shared secret: " << format_key_data(shared_secret) << endl;
         premaster_secret_block.Assign(shared_secret);
-    } else if (key_exchange == 0x2F) {
+    } else if (key_exchange == KE_RSA) {
+        cout << "Receiving RSA client key exchange" << endl;
         char* encrypted_premaster_secret = (char*)malloc(1024*(sizeof(char)));
         int len = unpack_client_key_exchange(client_key_exchange, encrypted_premaster_secret);
+        cout << "Server: RSA Client key exchange message length: " << len+2 << endl;
+        hs_messages.push_back(make_pair(client_key_exchange, len+2)); // +2 for length byte
         string premaster_secret;
         string encrypted_premaster_secret_str(encrypted_premaster_secret, len);
         rsa_decrypt(this->private_key_, &premaster_secret, encrypted_premaster_secret_str);
         premaster_secret_block.Assign(reinterpret_cast<const byte*>(premaster_secret.c_str()), 48);
-
         free(encrypted_premaster_secret);
     } else {
         cout << "Client key exchange not supported" << endl;
@@ -259,11 +272,11 @@ Ssl *SslServer::accept() {
         return NULL;
     }
 
-    cout << "Client master secret: " << format_key_data(master_secret) << endl;
-    cout << "Server write key: " << format_key_data(server_write_key) << endl;
-    cout << "Server write iv: " << format_key_data(server_write_iv) << endl;
-    cout << "Client write key: " << format_key_data(client_write_key) << endl;
-    cout << "Client write iv: " << format_key_data(client_write_iv) << endl;
+    // cout << "Client master secret: " << format_key_data(master_secret) << endl;
+    // cout << "Server write key: " << format_key_data(server_write_key) << endl;
+    // cout << "Server write iv: " << format_key_data(server_write_iv) << endl;
+    // cout << "Client write key: " << format_key_data(client_write_key) << endl;
+    // cout << "Client write iv: " << format_key_data(client_write_iv) << endl;
 
     // 9. Receive Certificate Verify
 
@@ -294,7 +307,7 @@ Ssl *SslServer::accept() {
     // Send Finished message
     std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, false, 12);
     std::string message(finished_msg.begin(), finished_msg.end());
-    cout << "Finished message: " << message.c_str() << endl;
+    // cout << "Finished message: " << message.c_str() << endl;
 
     // Send Finished message
     if (send_finished(new_ssl_cxn, (char*)message.c_str(), message.size()) != 0) {

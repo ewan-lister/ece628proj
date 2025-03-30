@@ -47,7 +47,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     return -1;
   }
 
-  std::vector<char*> hs_messages;
+  std::vector<pair<char*, size_t> > hs_messages;
   uint8_t key_exchange;
 
   // IMPLEMENT HANDSHAKE HERE
@@ -74,7 +74,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cipher_suites
   );
   this->logger_->log(("Client Hello: "));
-  hs_messages.push_back(client_hello);
+  // cout << "Client: appending client hello message: " << string(client_hello, data_length) << endl;
+  hs_messages.push_back(make_pair(client_hello, data_length));
   if (send_client_hello(this, client_hello, data_length) != 0) {
     cerr << "Couldn't send Client Hello" << endl;
     return -1;
@@ -87,7 +88,11 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cerr << "Couldn't receive Server Hello" << endl;
     return -1;
   }
-  hs_messages.push_back(server_hello);
+  size_t length = (static_cast<uint16_t>(server_hello[0]) << 8) |
+							static_cast<uint16_t>(server_hello[1]);
+
+  // cout << "Client: appending server hello message: " << string(server_hello, length+2) << endl;
+  hs_messages.push_back(make_pair(server_hello, length+2)); // +2 for length byte
   uint16_t version;
   char server_random[32];
   uint8_t cipher_suite;
@@ -100,8 +105,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cerr << "Couldn't receive Certificate" << endl;
     return -1;
   }
-  hs_messages.push_back(certificate);
-
+  hs_messages.push_back(make_pair(certificate, strlen(certificate)));
+  cout << "Client: Certifcate message length: " << strlen(certificate) << endl;
   // Convert to Crypto++ key
   CryptoPP::RSA::PublicKey server_rsa_public_key;
   load_and_verify_certificate(certificate, server_rsa_public_key);
@@ -125,13 +130,14 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
  		cerr << "Couldn't receive Server Key Exchange" << endl;
  		return -1;
  	  }
- 	  unpack_server_key_exchange(server_key_exchange, p, g, server_dhe_public_key, signature);
- 	  hs_messages.push_back(server_key_exchange);
-	  cout << "DH Parameter g: " << g << endl;
- 	  cout << "DH Parameter p: " << p << endl;
- 	  cout << "Server DH Public Key: " << server_dhe_public_key.data() << endl;
- 	  cout << "Signagture: " << endl;
- 	  print_buffer_hex(signature, signature.size());
+ 	  size_t len = unpack_server_key_exchange(server_key_exchange, p, g, server_dhe_public_key, signature);
+ 	  hs_messages.push_back(make_pair(server_key_exchange, len));
+  	  // cout << "Client: Appending Server Key exchange message: " << string(server_key_exchange, len) << endl;
+	  // cout << "DH Parameter g: " << g << endl;
+ 	 //  cout << "DH Parameter p: " << p << endl;
+ 	  // cout << "Server DH Public Key: " << server_dhe_public_key.data() << endl;
+ 	  // cout << "Signagture: " << endl;
+ 	  // print_buffer_hex(signature, signature.size());
  	  std::vector<unsigned char> seralized_params = serialize_dhe_params(p, g, server_dhe_public_key);
  	  if (verify_dhe_server_key_exchange_signature(
  		client_random, server_random, seralized_params, signature, server_rsa_public_key
@@ -170,7 +176,9 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   CryptoPP::SecByteBlock client_random_block(
       reinterpret_cast<const byte*>(client_random), 32);
   // TODO: For testing. Change this to RSA
+  char* persistent_client_key_exchange_message;
   if (key_exchange == KE_RSA) {
+  	cout << "Starting RSA client key exchange" << endl;
   	string premaster_secret;
   	string encrypted_premaster_secret;
   	generate_premaster_secret(premaster_secret);
@@ -187,7 +195,11 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
  	 int len = pack_client_key_exchange(client_key_exchange, encrypted_premaster_secret.c_str(), encrypted_premaster_secret.length());
  	 //  cout << "Client key exchange length: " << len << endl;
  	 this->logger_->log(("Client Key Exchange"));
- 	 hs_messages.push_back(client_key_exchange);
+  	 persistent_client_key_exchange_message = new char[len];
+  	 memcpy(persistent_client_key_exchange_message, client_key_exchange, len);
+
+ 	 hs_messages.push_back(make_pair(persistent_client_key_exchange_message, len));
+  	 // cout << "Client: Appending Client key exchange message: " << string(client_key_exchange, len) << endl;
  	 if (send_client_key_exchange(this, client_key_exchange, len) != 0) {
  	   cerr << "Couldn't send Client Key Exchange" << endl;
  	   return -1;
@@ -206,11 +218,13 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
    	}
     free(client_key_exchange);
   } else {
+  	cout << "Starting DHE client key exchange" << endl;
     CryptoPP::SecByteBlock client_dhe_public_key;
   	CryptoPP::SecByteBlock client_dhe_private_key;
     CryptoPP::DH dh;
   	generate_dhe_client_keypair(p, g, client_dhe_private_key, client_dhe_public_key, dh);
 
+  	cout << "Sending Client Key Exchange" << endl;
     std::vector<unsigned char> client_key_exchange;
 	pack_client_key_exchange_dhe(client_dhe_public_key, client_key_exchange);
  	if (send_client_key_exchange_dhe(this, client_key_exchange) != 0) {
@@ -219,17 +233,23 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   	}
 
     // TODO: Check this. It might be buggy.
-    hs_messages.push_back(reinterpret_cast<char*>(client_key_exchange.data()));
+  	// cout << "Client: Appending Client key exchange message: " << string(reinterpret_cast<char*>(client_key_exchange.data()), client_key_exchange.size()) << endl;
+  	int len = client_key_exchange.size();
+  	persistent_client_key_exchange_message = new char[len];
+  	memcpy(persistent_client_key_exchange_message, client_key_exchange.data(), len);
+  	hs_messages.push_back(make_pair(persistent_client_key_exchange_message, len));
 
+  	// cout << "Performing DHE key agreement" << endl;
     // Calculate shared secret
     CryptoPP::SecByteBlock shared_secret(dh.AgreedValueLength());
     if (!dh.Agree(shared_secret, client_dhe_private_key, server_dhe_public_key)) {
       cerr << "Error agreeing on shared secret" << endl;
         return -1;
     }
-    cout << "Client shared secret: " << format_key_data(shared_secret) << endl;
+    // cout << "Client shared secret: " << format_key_data(shared_secret) << endl;
     CryptoPP::SecByteBlock premaster_secret_block(shared_secret);
 
+  	// cout << "Deriving keys from shared secret" << endl;
     if (TLS12_KDF_AES256(
       premaster_secret_block, client_random_block, server_random_block,
       master_secret, client_write_key, server_write_key,
@@ -238,14 +258,15 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
       	cout << "Error generating keys" << endl;
        	return -1;
    	}
+  	cout << "Completed DHE client key exchange" << endl;
   }
 
-  cout << "Client master secret: " << format_key_data(master_secret) << endl;
-  cout << "Server write key: " << format_key_data(server_write_key) << endl;
-  cout << "Server write iv: " << format_key_data(server_write_iv) << endl;
-  cout << "Client write key: " << format_key_data(client_write_key) << endl;
-  cout << "Client write iv: " << format_key_data(client_write_iv) << endl;
-  cout << "Sent Client Key Exchange: " << endl;
+  // cout << "Client master secret: " << format_key_data(master_secret) << endl;
+  // cout << "Server write key: " << format_key_data(server_write_key) << endl;
+  // cout << "Server write iv: " << format_key_data(server_write_iv) << endl;
+  // cout << "Client write key: " << format_key_data(client_write_key) << endl;
+  // cout << "Client write iv: " << format_key_data(client_write_iv) << endl;
+  // cout << "Sent Client Key Exchange: " << endl;
 
   // Handle RSA/DHE
 
@@ -256,6 +277,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // Save key and key len
 
   // cout << "Client Number of handshake messages: " << hs_messages.size() << endl;
+  // cout << "Client finished message master secret: " << endl;
+  // print_buffer_hex(master_secret.data(), 48);
   // Send Finished message
   std::vector<unsigned char> finished_msg = compute_tls_finished_msg(hs_messages, master_secret, true, 12);
   std::string message(finished_msg.begin(), finished_msg.end());
@@ -289,6 +312,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   hs_messages.clear();
   free(client_hello);
   free(client_random);
+  delete [] persistent_client_key_exchange_message;
   return 0;
 }
 
