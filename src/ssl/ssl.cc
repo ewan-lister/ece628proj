@@ -17,6 +17,10 @@ Ssl::Ssl() {
   shared_write_key_len_ = 0;
   shared_read_key_ = NULL;
   shared_read_key_len_ = 0;
+  shared_write_mac_key_ = NULL;
+  shared_write_mac_key_len_ = 0;
+  shared_read_mac_key_ = NULL;
+  shared_read_mac_key_len_ = 0;
   write_iv = NULL;
   write_iv_len_ = 0;
   read_iv = NULL;
@@ -31,6 +35,10 @@ Ssl::Ssl(TCP* tcp) {
   shared_write_key_len_ = 0;
   shared_read_key_ = NULL;
   shared_read_key_len_ = 0;
+  shared_write_mac_key_ = NULL;
+  shared_write_mac_key_len_ = 0;
+  shared_read_mac_key_ = NULL;
+  shared_read_mac_key_len_ = 0;
   write_iv = NULL;
   write_iv_len_ = 0;
   read_iv = NULL;
@@ -45,6 +53,12 @@ Ssl::~Ssl() {
   }
   if ( shared_read_key_ != NULL ) {
     free(shared_read_key_);
+  }
+  if ( shared_write_mac_key_ != NULL ) {
+    free(shared_write_mac_key_);
+  }
+  if ( shared_read_mac_key_ != NULL ) {
+    free(shared_read_mac_key_);
   }
   if ( write_iv != NULL ) {
     free(write_iv);
@@ -110,6 +124,21 @@ int Ssl::set_shared_read_key(const unsigned char * const shared_key, size_t key_
   return 0;
 }
 
+int Ssl::set_shared_write_mac_key(const unsigned char * const shared_key, size_t key_len) {
+  this->shared_write_mac_key_len_ = key_len;
+  this->shared_write_mac_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
+  memcpy(this->shared_write_mac_key_, shared_key, key_len);
+  return 0;
+}
+
+// set key
+int Ssl::set_shared_read_mac_key(const unsigned char * const shared_key, size_t key_len) {
+  this->shared_read_mac_key_len_ = key_len;
+  this->shared_read_mac_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
+  memcpy(this->shared_read_mac_key_, shared_key, key_len);
+  return 0;
+}
+
 // strings: send, recv
 // returns 0 on success, -1 otherwise
 
@@ -125,6 +154,7 @@ int Ssl::send(const std::string &send_str) {
   string cipher_text;
 
   if (aes_encrypt(this->shared_write_key_, this->shared_write_key_len_,
+                  this->shared_write_mac_key_, this->shared_write_mac_key_len_,
                    &cipher_text, send_str, this->write_iv, record_seq_num) != 0 ) {
     cerr << "Couldn't encrypt." << endl;
     return -1;
@@ -167,6 +197,7 @@ int Ssl::recv(std::string *recv_str) {
 
   // decrypt
   if ( aes_decrypt(this->shared_read_key_, this->shared_read_key_len_,
+                  this->shared_read_mac_key_, this->shared_read_mac_key_len_,
                    recv_str, cipher_text, this->read_iv, record_seq_num) != 0 ) {
     cerr << "Couldn't decrypt." << endl;
     return -1;

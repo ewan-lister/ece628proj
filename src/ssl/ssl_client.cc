@@ -169,6 +169,8 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   CryptoPP::SecByteBlock master_secret;
   CryptoPP::SecByteBlock client_write_key;
   CryptoPP::SecByteBlock server_write_key;
+  CryptoPP::SecByteBlock client_mac_key;
+  CryptoPP::SecByteBlock server_mac_key;
   CryptoPP::SecByteBlock client_write_iv;
   CryptoPP::SecByteBlock server_write_iv;
   CryptoPP::SecByteBlock server_random_block(
@@ -178,7 +180,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // TODO: For testing. Change this to RSA
   char* persistent_client_key_exchange_message;
   if (key_exchange == KE_RSA) {
-  	cout << "Starting RSA client key exchange" << endl;
+  	// cout << "Starting RSA client key exchange" << endl;
   	string premaster_secret;
   	string encrypted_premaster_secret;
   	generate_premaster_secret(premaster_secret);
@@ -208,14 +210,15 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   	CryptoPP::SecByteBlock premaster_secret_block(
   	    reinterpret_cast<const byte*>(premaster_secret.c_str()), 48);
 
-    if (TLS12_KDF_AES256(
+  	if (TLS12_KDF_AES256(
       premaster_secret_block, client_random_block, server_random_block,
-      master_secret, client_write_key, server_write_key,
-      client_write_iv, server_write_iv
+      master_secret, client_write_key, server_write_key, client_mac_key,
+      server_mac_key, client_write_iv, server_write_iv
     ) != 0) {
       	cout << "Error generating keys" << endl;
        	return -1;
    	}
+
     free(client_key_exchange);
   } else {
     CryptoPP::SecByteBlock client_dhe_public_key;
@@ -247,16 +250,14 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     // cout << "Client shared secret: " << format_key_data(shared_secret) << endl;
     CryptoPP::SecByteBlock premaster_secret_block(shared_secret);
 
-  	// cout << "Deriving keys from shared secret" << endl;
     if (TLS12_KDF_AES256(
       premaster_secret_block, client_random_block, server_random_block,
-      master_secret, client_write_key, server_write_key,
-      client_write_iv, server_write_iv
+      master_secret, client_write_key, server_write_key, client_mac_key,
+      server_mac_key, client_write_iv, server_write_iv
     ) != 0) {
       	cout << "Error generating keys" << endl;
        	return -1;
    	}
-  	// cout << "Completed DHE client key exchange" << endl;
   }
 
   // cout << "Client master secret: " << format_key_data(master_secret) << endl;
@@ -290,8 +291,10 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   }
 
   this->set_shared_write_key(client_write_key.data(), client_write_key.size());
+  this->set_shared_write_mac_key(client_mac_key.data(), client_mac_key.size());
   this->set_shared_write_iv(client_write_iv.data(), client_write_iv.size());
   this->set_shared_read_key(server_write_key.data(), server_write_key.size());
+  this->set_shared_read_mac_key(server_mac_key.data(), server_mac_key.size());
   this->set_shared_read_iv(server_write_iv.data(), server_write_iv.size());
 
   // Receive Finished message

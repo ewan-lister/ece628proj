@@ -248,12 +248,14 @@ Ssl *SslServer::accept() {
     CryptoPP::SecByteBlock master_secret;
     CryptoPP::SecByteBlock client_write_key;
     CryptoPP::SecByteBlock server_write_key;
+    CryptoPP::SecByteBlock client_mac_key;
+    CryptoPP::SecByteBlock server_mac_key;
     CryptoPP::SecByteBlock client_write_iv;
     CryptoPP::SecByteBlock server_write_iv;
     if (TLS12_KDF_AES256(
         premaster_secret_block, client_random_block, server_random_block,
-        master_secret, client_write_key, server_write_key,
-        client_write_iv, server_write_iv
+        master_secret, client_write_key, server_write_key, client_mac_key,
+        server_mac_key, client_write_iv, server_write_iv
         ) != 0) {
         cout << "Error generating keys" << endl;
         return NULL;
@@ -299,9 +301,11 @@ Ssl *SslServer::accept() {
         return NULL;
     }
 
+    new_ssl_cxn->set_shared_write_mac_key(server_mac_key.data(), server_mac_key.size());
     new_ssl_cxn->set_shared_write_key(server_write_key.data(), server_write_key.size());
     new_ssl_cxn->set_shared_write_iv(server_write_iv.data(), server_write_iv.size());
     new_ssl_cxn->set_shared_read_key(client_write_key.data(), client_write_key.size());
+    new_ssl_cxn->set_shared_read_mac_key(client_mac_key.data(), client_mac_key.size());
     new_ssl_cxn->set_shared_read_iv(client_write_iv.data(), client_write_iv.size());
 
     free(client_hello);

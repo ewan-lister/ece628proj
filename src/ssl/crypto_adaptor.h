@@ -20,10 +20,12 @@ int generate_rsa_keys(CryptoPP::RSA::PrivateKey &private_key, CryptoPP::RSA::Pub
 //////////////////////////////////////////////
 // Encryption
 int aes_encrypt(const unsigned char* key, size_t key_len,
+                const unsigned char* mac_key, size_t mac_key_len,
                 std::string *cipher_text, const std::string &plain_text,
                 const unsigned char* iv, uint64_t seq_num);
 
 int aes_decrypt(const unsigned char* key, size_t key_len,
+                const unsigned char* mac_key, size_t mac_key_len,
                 std::string *plain_text, const std::string &cipher_text,
                 const unsigned char* iv, uint64_t seq_num);
 
@@ -40,6 +42,8 @@ int TLS12_KDF_AES256(
     CryptoPP::SecByteBlock& master_secret,
     CryptoPP::SecByteBlock& client_write_key,
     CryptoPP::SecByteBlock& server_write_key,
+    CryptoPP::SecByteBlock& client_mac_key,
+    CryptoPP::SecByteBlock& server_mac_key,
     CryptoPP::SecByteBlock& client_write_iv,
     CryptoPP::SecByteBlock& server_write_iv
 );

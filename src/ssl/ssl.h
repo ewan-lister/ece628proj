@@ -82,6 +82,8 @@ class Ssl {
   // for key
   virtual int set_shared_write_key(const unsigned char * const shared_key, size_t key_len);
   virtual int set_shared_read_key(const unsigned char * const shared_key, size_t key_len);
+  virtual int set_shared_write_mac_key(const unsigned char * const shared_key, size_t key_len);
+  virtual int set_shared_read_mac_key(const unsigned char * const shared_key, size_t key_len);
   virtual int set_shared_write_iv(const unsigned char * const iv, size_t iv_len);
   virtual int set_shared_read_iv(const unsigned char * const iv, size_t iv_len);
 
@@ -97,6 +99,12 @@ class Ssl {
 
   unsigned char* shared_read_key_;
   size_t shared_read_key_len_;
+
+  unsigned char* shared_write_mac_key_;
+  size_t shared_write_mac_key_len_;
+
+  unsigned char* shared_read_mac_key_;
+  size_t shared_read_mac_key_len_;
 
   unsigned char* write_iv;
   size_t write_iv_len_;

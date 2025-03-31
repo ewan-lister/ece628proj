@@ -55,42 +55,76 @@ int generate_rsa_keys(CryptoPP::RSA::PrivateKey &private_key, CryptoPP::RSA::Pub
 }
 
 int aes_encrypt(const unsigned char* key, size_t key_len,
+                const unsigned char* mac_key, size_t mac_key_len,
                 std::string *cipher_text, const std::string &plain_text,
                 const unsigned char* iv, uint64_t seq_num) {
+    // 1. Create MAC of the plaintext || sequence number
+    CryptoPP::HMAC<CryptoPP::SHA256> hmac(mac_key, mac_key_len);
 
-  // https://www.cryptopp.com/wiki/CBC_Mode
-  SecByteBlock aes_key(key, key_len);
+    // Build authenticated data: seq_num (8 bytes) || content_type (1 byte) ||
+    // version (2 bytes) || length (2 bytes) || plaintext
+    std::vector<unsigned char> auth_data;
+    auth_data.reserve(13 + plain_text.size());
 
-  // Create unique IV for each record by XORing with sequence number
-  unsigned char record_iv[16];
-  memcpy(record_iv, iv, 16);
+    // Add sequence number (big-endian)
+    for (int i = 7; i >= 0; --i) {
+        auth_data.push_back((seq_num >> (i * 8)) & 0xFF);
+    }
 
-  for(int i = 0; i < 8; i++) {
-    record_iv[8+i] ^= (seq_num >> ((7-i)*8)) & 0xFF;
-  }
+    // Add TLS record header (using application data type and TLS 1.2)
+    auth_data.push_back(0x17);  // Application Data
+    auth_data.push_back(0x03);  // TLS 1.2 version
+    auth_data.push_back(0x03);
 
-  try {
-    CBC_Mode<AES>::Encryption aes_enc;
-    aes_enc.SetKeyWithIV(aes_key, aes_key.size(), record_iv);
+    // Add length of plaintext (2 bytes)
+    auth_data.push_back((plain_text.size() >> 8) & 0xFF);
+    auth_data.push_back(plain_text.size() & 0xFF);
 
-    StringSource ss(
-      plain_text,
-      true,
-      new StreamTransformationFilter( aes_enc,
-        new StringSink( *cipher_text )
-        )
-      );
-  } catch(const CryptoPP::Exception &e) {
-    cerr << e.what() << endl;
-    return -1;
-  }
-  return 0;
+    // Add plaintext
+    auth_data.insert(auth_data.end(), plain_text.begin(), plain_text.end());
+
+    // https://www.cryptopp.com/wiki/CBC_Mode
+    SecByteBlock aes_key(key, key_len);
+
+    // Create unique IV for each record by XORing with sequence number
+    unsigned char record_iv[16];
+    memcpy(record_iv, iv, 16);
+
+    for(int i = 0; i < 8; i++) {
+        record_iv[8+i] ^= (seq_num >> ((7-i)*8)) & 0xFF;
+    }
+
+    try {
+        // Calculate MAC
+        CryptoPP::SecByteBlock mac(hmac.DigestSize());
+        hmac.CalculateDigest(mac, auth_data.data(), auth_data.size());
+
+        CBC_Mode<AES>::Encryption aes_enc;
+        aes_enc.SetKeyWithIV(aes_key, aes_key.size(), record_iv);
+
+        std::string input = plain_text;
+        input.append(reinterpret_cast<const char*>(mac.data()), mac.size());
+
+        StringSource ss(
+          input,
+          true,
+          new StreamTransformationFilter( aes_enc,
+            new StringSink( *cipher_text )
+            )
+          );
+        cout << "Ciphertext length: " << cipher_text->length() << endl;
+        cout << "Completed authed encryption" << endl;
+    } catch(const CryptoPP::Exception &e) {
+        cerr << e.what() << endl;
+        return -1;
+    }
+    return 0;
 }
 
 int aes_decrypt(const unsigned char* key, size_t key_len,
+                const unsigned char* mac_key, size_t mac_key_len,
                 std::string *plain_text, const std::string &cipher_text,
                 const unsigned char* iv, uint64_t seq_num) {
-
   SecByteBlock aes_key(key, key_len);
 
   // Create unique IV for each record by XORing with sequence number
@@ -112,6 +146,52 @@ int aes_decrypt(const unsigned char* key, size_t key_len,
         new StringSink( *plain_text )
       )
     );
+
+    // 2. Split decrypted data into plaintext and MAC
+    size_t mac_size = CryptoPP::HMAC<CryptoPP::SHA256>().DigestSize();
+    if (plain_text->size() < mac_size) {
+      cout << "Decrypted data is too short to contain MAC" << endl;
+      return -1;
+    }
+
+    std::string received_mac = plain_text->substr(plain_text->size() - mac_size);
+    *plain_text = plain_text->substr(0, plain_text->size() - mac_size);
+
+    // 3. Verify MAC
+    CryptoPP::HMAC<CryptoPP::SHA256> hmac(mac_key, mac_key_len);
+
+    // Rebuild authenticated data
+    std::vector<unsigned char> auth_data;
+    auth_data.reserve(13 + plain_text->size());
+
+    // Add sequence number
+    for (int i = 7; i >= 0; --i) {
+        auth_data.push_back((seq_num >> (i * 8)) & 0xFF);
+    }
+
+    // Add TLS record header
+    auth_data.push_back(0x17);  // Application Data
+    auth_data.push_back(0x03);  // TLS 1.2 version
+    auth_data.push_back(0x03);
+
+    // Add length
+    auth_data.push_back((plain_text->size() >> 8) & 0xFF);
+    auth_data.push_back(plain_text->size() & 0xFF);
+
+    // Add plaintext
+    auth_data.insert(auth_data.end(), plain_text->begin(), plain_text->end());
+
+      cout << "auth data to verify: " << endl;
+    print_buffer_hex(auth_data, auth_data.size());
+
+    // Calculate and verify MAC
+    CryptoPP::SecByteBlock calculated_mac(hmac.DigestSize());
+    hmac.CalculateDigest(calculated_mac, auth_data.data(), auth_data.size());
+
+    if (memcmp(calculated_mac, received_mac.data(), mac_size) != 0) {
+        cout << "MAC verification failed" << endl;
+        return -1; // MAC verification failed
+    }
   } catch(const CryptoPP::Exception &e) {
     cout << e.what() << endl;
     return -1;
@@ -271,12 +351,16 @@ int TLS12_KDF_AES256(
     CryptoPP::SecByteBlock& master_secret,
     CryptoPP::SecByteBlock& client_write_key,
     CryptoPP::SecByteBlock& server_write_key,
+    CryptoPP::SecByteBlock& client_mac_key,
+    CryptoPP::SecByteBlock& server_mac_key,
     CryptoPP::SecByteBlock& client_write_iv,
     CryptoPP::SecByteBlock& server_write_iv
 ) {
     try {
         // AES-256 key size is 32 bytes (256 bits)
         const size_t aes256_key_size = 32;
+
+        const size_t mac_key_size = 32;
 
         // IV size for AES in CBC mode is block size (16 bytes)
         const size_t iv_size = 16;
@@ -301,11 +385,13 @@ int TLS12_KDF_AES256(
         memcpy(key_seed + server_random.size(), client_random.data(), client_random.size());
 
         // Total key material needed for AES-256:
+        // - Client mac key (32 bytes)
+        // - Server mac key (32 bytes)
         // - Client write key (32 bytes)
         // - Server write key (32 bytes)
         // - Client write IV (16 bytes)
         // - Server write IV (16 bytes)
-        const size_t key_material_length = 2 * aes256_key_size + 2 * iv_size;
+        const size_t key_material_length = 2 * mac_key_size + 2 * aes256_key_size + 2 * iv_size;
         CryptoPP::SecByteBlock key_block(key_material_length);
 
         // Generate key block
@@ -314,10 +400,20 @@ int TLS12_KDF_AES256(
         // Extract keys and IVs from key block
         client_write_key.resize(aes256_key_size);
         server_write_key.resize(aes256_key_size);
+        client_mac_key.resize(mac_key_size);
+        server_mac_key.resize(mac_key_size);
         client_write_iv.resize(iv_size);
         server_write_iv.resize(iv_size);
 
         size_t offset = 0;
+
+        // Copy client MAC key
+        memcpy(client_mac_key, key_block + offset, mac_key_size);
+        offset += mac_key_size;
+
+        // Copy server MAC key
+        memcpy(server_mac_key, key_block + offset, mac_key_size);
+        offset += mac_key_size;
 
         // Copy client write key (32 bytes for AES-256)
         memcpy(client_write_key, key_block + offset, aes256_key_size);
@@ -340,46 +436,6 @@ int TLS12_KDF_AES256(
         return -1;
     } catch (const std::exception& e) {
         std::cerr << "Standard exception: " << e.what() << std::endl;
-        return -1;
-    }
-}
-
-int derive_dhe_keys(
-    const CryptoPP::DH& dh,
-    const CryptoPP::SecByteBlock& private_key,
-    const CryptoPP::SecByteBlock& other_public_key,
-    const CryptoPP::SecByteBlock& client_random,
-    const CryptoPP::SecByteBlock& server_random,
-    CryptoPP::SecByteBlock& master_secret,
-    CryptoPP::SecByteBlock& client_write_key,
-    CryptoPP::SecByteBlock& server_write_key,
-    CryptoPP::SecByteBlock& client_write_iv,
-    CryptoPP::SecByteBlock& server_write_iv
-) {
-    try {
-        // Calculate shared secret
-        CryptoPP::SecByteBlock shared_secret(dh.AgreedValueLength());
-        if (!dh.Agree(shared_secret, private_key, other_public_key)) {
-            return -1;
-        }
-
-        // Use shared secret as premaster secret
-        CryptoPP::SecByteBlock premaster_secret(shared_secret);
-
-        // Derive master secret and keys using TLS 1.2 KDF
-        return TLS12_KDF_AES256(
-            premaster_secret,
-            client_random,
-            server_random,
-            master_secret,
-            client_write_key,
-            server_write_key,
-            client_write_iv,
-            server_write_iv
-        );
-    }
-    catch(const CryptoPP::Exception& e) {
-        std::cerr << "Key derivation failed: " << e.what() << std::endl;
         return -1;
     }
 }
