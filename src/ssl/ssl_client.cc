@@ -162,20 +162,19 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   }
 
   // 5. Receive Certificate Request message
- //  char* certificate_request;
- //  if (recv_certificate_request(this, certificate_request) != 0) {
-	// cerr << "Couldn't receive Certificate Request" << endl;
-	// return -1;
- //  }
- //  vector<uint8_t> cert_types;
- //  vector<uint16_t> sig_algs;
- //  size_t len = unpack_certificate_request(certificate_request, cert_types, sig_algs);
- //  hs_messages.push_back(make_pair(certificate_request, len));
- //  if (validate_cert_request(cert_types, sig_algs) != 0) {
-	// cerr << "Certificate Request validation failed" << endl;
- //  	return -1;
- //  }
- //  cout << "Certificate Request validation succeeded" << endl;
+  char* certificate_request;
+  if (recv_certificate_request(this, certificate_request) != 0) {
+	cerr << "Couldn't receive Certificate Request" << endl;
+	return -1;
+  }
+  vector<uint8_t> cert_types;
+  vector<uint16_t> sig_algs;
+  size_t len = unpack_certificate_request(certificate_request, cert_types, sig_algs);
+  hs_messages.push_back(make_pair(certificate_request, len));
+  if (validate_cert_request(cert_types, sig_algs) != 0) {
+	cerr << "Certificate Request validation failed" << endl;
+  	return -1;
+  }
 
 
   // 6. Receive Server Hello Done message
@@ -336,7 +335,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   }
   // cout << "Sucessfully verified server finished message" << endl;
 
-  // free(certificate_request);
+  free(certificate_request);
   free(certificate);
   free(server_hello);
   free(server_finished);

@@ -187,16 +187,16 @@ Ssl *SslServer::accept() {
      * cert authorities
      **/
     // 4. Send Certificate Request.
-    // vector<unsigned char> certificate_request = generate_certificate_request();
-    // std::string certificate_request_msg(certificate_request.begin(), certificate_request.end());
-    // // hs_messages.push_back(make_pair((char*)certificate_request_msg.c_str(), certificate_request_msg.size()));
-    // if (send_record(new_ssl_cxn, HS_CERTIFICATE_REQUEST,
-    //     VER_99, (char*)certificate_request_msg.c_str(),
-    //     certificate_request_msg.size()) != 0
-    // ) {
-    //     cerr << "Error sending certificate request" << endl;
-    //     return NULL;
-    // }
+    vector<unsigned char> certificate_request = generate_certificate_request();
+    std::string certificate_request_msg(certificate_request.begin(), certificate_request.end());
+    hs_messages.push_back(make_pair((char*)certificate_request_msg.c_str(), certificate_request_msg.size()));
+    if (send_record(new_ssl_cxn, HS_CERTIFICATE_REQUEST,
+        VER_99, (char*)certificate_request_msg.c_str(),
+        certificate_request_msg.size()) != 0
+    ) {
+        cerr << "Error sending certificate request" << endl;
+        return NULL;
+    }
 
     /**
      *  Send SERVER_HELLO_DONE
@@ -265,7 +265,7 @@ Ssl *SslServer::accept() {
         cerr << "Couldn't receive Certificate Verify" << endl;
         return NULL;
     }
-    uint16_t sig_len = ((static_cast<uint16_t>(certificate_verify[0]) << 8) & 0xFFFF) |
+    uint16_t sig_len = ((static_cast<uint16_t>(certificate_verify[0]) << 8) & 0xFF00) |
                        (static_cast<uint16_t>(certificate_verify[1]) & 0xFF);
     if (validate_certificate_verify(certificate_verify, hs_messages, client_rsa_public_key) != 0 ) {
         cout << "Certificate verify failed" << endl;

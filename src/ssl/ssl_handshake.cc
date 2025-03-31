@@ -527,7 +527,7 @@ size_t unpack_uint8(const char* buffer, size_t offset, uint8_t& value) {
 // Unpack uint16_t from a buffer (little-endian)
 size_t unpack_uint16(const char* buffer, size_t offset, uint16_t& value) {
     value = static_cast<uint16_t>(
-        ((static_cast<uint8_t>(buffer[offset]) << 8) & 0xFFFF) |     // High byte
+        ((static_cast<uint8_t>(buffer[offset]) << 8) & 0xFF00) |     // High byte
         (static_cast<uint8_t>(buffer[offset + 1]) & 0xFF)        // Low byte
     );
     return offset + 2;
@@ -572,7 +572,7 @@ int unpack_client_key_exchange(char* buffer, char*& data) {
     size_t offset = 0;
 
     // Read total length from first 2 bytes (big-endian)
-    uint16_t total_length = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFFFF) |
+    uint16_t total_length = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFF00) |
                        static_cast<uint16_t>(buffer[offset + 1] & 0xFF);
     offset += 2;
 
@@ -684,7 +684,7 @@ int unpack_server_hello(
     offset += 2;
 
     // Read protocol version
-    version = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFFFF) |
+    version = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFF00) |
                        (static_cast<uint16_t>(buffer[offset + 1]) & 0xFF);
     offset += 2;
 
@@ -712,7 +712,7 @@ int unpack_client_hello(
     offset += 2;
 
     // Read protocol version
-    protocol_version = ((static_cast<uint16_t>(buffer[offset]) << 8) & 0xFFFF) |
+    protocol_version = ((static_cast<uint16_t>(buffer[offset]) << 8) & 0xFF00) |
                        (static_cast<uint16_t>(buffer[offset + 1] & 0xFF));
     offset += 2;
 
@@ -724,7 +724,7 @@ int unpack_client_hello(
     cipher_suites.clear();
 
     // Read cipher suites length (2 bytes)
-    uint16_t cipher_suites_length = ((static_cast<uint16_t>(buffer[offset]) << 8) & 0xFFFF) |
+    uint16_t cipher_suites_length = ((static_cast<uint16_t>(buffer[offset]) << 8) & 0xFF00) |
                                     (static_cast<uint16_t>(buffer[offset + 1]) & 0xFF );
     offset += 2;
 
@@ -1086,26 +1086,23 @@ size_t unpack_certificate_request(
 ) {
     size_t offset = 0;
 
-    cout << "Unpacking Certificate Request..." << endl;
     // Get certificate types
-    uint8_t cert_types_len = static_cast<uint8_t>(cert_request[offset++]);
+    uint8_t cert_types_len = (static_cast<uint8_t>(cert_request[offset++]));
     for (size_t i = 0; i < cert_types_len; i++) {
         cert_types.push_back(static_cast<uint8_t>(cert_request[offset++]));
     }
-    cout << "cert_types_len: " << cert_types_len << endl;
 
     // Get signature algorithms
-    uint16_t sig_algs_len = ((static_cast<uint16_t>(cert_request[offset]) << 8) & 0xFF) |
+    uint16_t sig_algs_len = ((static_cast<uint16_t>(cert_request[offset]) << 8) & 0xFF00) |
                             (static_cast<uint16_t>(cert_request[offset + 1]) & 0xFF );
     offset += 2;
 
     // Each signature algorithm is a 2-byte value
     for (size_t i = 0; i < sig_algs_len; i += 2) {
-        uint16_t alg = (static_cast<uint16_t>(cert_request[offset + i]) << 8) |
-                       static_cast<uint16_t>(cert_request[offset + i + 1]);
+        uint16_t alg = ((static_cast<uint16_t>(cert_request[offset + i]) << 8) & 0xFF00) |
+                       (static_cast<uint16_t>(cert_request[offset + i + 1]) & 0xFF);
         sig_algs.push_back(alg);
     }
-    cout << "sig_algs_len: " << sig_algs_len << endl;
     offset += sig_algs_len;
 
     return offset;
@@ -1115,6 +1112,11 @@ int validate_cert_request(
     std::vector<uint8_t>& cert_types,
     std::vector<uint16_t>& sig_algs
 ) {
+    if (cert_types.empty() || sig_algs.empty()) {
+        std::cerr << "Empty certificate types or signature algorithms" << std::endl;
+        return -1;
+    }
+
     if (cert_types[0] != 0x01) { // RSA_SIGN
         std::cerr << "Unsupported certificate type, expected RSA_SIGN (0x01)" << std::endl;
         return -1;
@@ -1124,6 +1126,8 @@ int validate_cert_request(
         std::cerr << "Unsupported signature algorithm, expected RSA+SHA1 (0x0201)" << std::endl;
         return -1;
     }
+
+    return 0;
 }
 
 std::vector<unsigned char> generate_certificate_verify(
@@ -1167,7 +1171,7 @@ int validate_certificate_verify(
     const CryptoPP::RSA::PublicKey& public_key
 ) {
     // Get signature length from first 2 bytes
-    uint16_t sig_len = ((static_cast<uint16_t>(cert_verify_msg[0]) << 8) & 0xFFFF) |
+    uint16_t sig_len = ((static_cast<uint16_t>(cert_verify_msg[0]) << 8) & 0xFF00) |
                        (static_cast<uint16_t>(cert_verify_msg[1]) & 0xFF);
 
     // Extract signature
