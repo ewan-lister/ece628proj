@@ -80,14 +80,16 @@ class Ssl {
   virtual int recv(Record *recv_record);
 
   // for key
-  virtual int set_shared_key(const unsigned char * const shared_key, size_t key_len);
+  virtual int set_shared_write_key(const unsigned char * const shared_key, size_t key_len);
+  virtual int set_shared_read_key(const unsigned char * const shared_key, size_t key_len);
 
  protected:
   TCP* tcp_;
   Logger* logger_;
 
-  unsigned char* shared_key_;
-  size_t shared_key_len_;
+  unsigned char* shared_write_key_;
+  size_t shared_write_key_len_;
+
   unsigned char* shared_read_key_;
   size_t shared_read_key_len_;
 

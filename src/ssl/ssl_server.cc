@@ -299,7 +299,8 @@ Ssl *SslServer::accept() {
         return NULL;
     }
 
-    new_ssl_cxn->set_shared_key(client_write_key.data(), client_write_key.size());
+    new_ssl_cxn->set_shared_write_key(server_write_key.data(), server_write_key.size());
+    new_ssl_cxn->set_shared_read_key(client_write_key.data(), client_write_key.size());
 
     free(client_hello);
     free(client_finished);

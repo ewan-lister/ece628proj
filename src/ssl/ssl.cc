@@ -13,19 +13,26 @@ using namespace std;
 
 Ssl::Ssl() {
   this->tcp_ = new TCP();
-  shared_key_ = NULL;
-  shared_key_len_ = 0;
+  shared_write_key_ = NULL;
+  shared_write_key_len_ = 0;
+  shared_read_key_ = NULL;
+  shared_read_key_len_ = 0;
 }
 
 Ssl::Ssl(TCP* tcp) {
   this->tcp_ = tcp;
-  shared_key_ = NULL;
-  shared_key_len_ = 0;
+  shared_write_key_ = NULL;
+  shared_write_key_len_ = 0;
+  shared_read_key_ = NULL;
+  shared_read_key_len_ = 0;
 }
 
 Ssl::~Ssl() {
-  if ( shared_key_ != NULL ) {
-    free(shared_key_);
+  if ( shared_write_key_ != NULL ) {
+    free(shared_write_key_);
+  }
+  if ( shared_read_key_ != NULL ) {
+    free(shared_read_key_);
   }
   if ( this->tcp_ ) {
     this->tcp_->socket_close();
@@ -53,11 +60,19 @@ int Ssl::get_port() const {
   return port;
 }
 
+// set write key
+int Ssl::set_shared_write_key(const unsigned char * const shared_key, size_t key_len) {
+  this->shared_write_key_len_ = key_len;
+  this->shared_write_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
+  memcpy(this->shared_write_key_, shared_key, key_len);
+  return 0;
+}
+
 // set key
-int Ssl::set_shared_key(const unsigned char * const shared_key, size_t key_len) {
-  this->shared_key_len_ = key_len;
-  this->shared_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
-  memcpy(this->shared_key_, shared_key, key_len);
+int Ssl::set_shared_read_key(const unsigned char * const shared_key, size_t key_len) {
+  this->shared_read_key_len_ = key_len;
+  this->shared_read_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
+  memcpy(this->shared_read_key_, shared_key, key_len);
   return 0;
 }
 
@@ -73,7 +88,7 @@ int Ssl::send(const std::string &send_str) {
   // encrypt
   string cipher_text;
 
-  if (aes_encrypt(this->shared_key_, this->shared_key_len_,
+  if (aes_encrypt(this->shared_write_key_, this->shared_write_key_len_,
                    &cipher_text, send_str) != 0 ) {
     cerr << "Couldn't encrypt." << endl;
     return -1;
@@ -113,7 +128,7 @@ int Ssl::recv(std::string *recv_str) {
   free(recv_record.data);
 
   // decrypt
-  if ( aes_decrypt(this->shared_key_, this->shared_key_len_,
+  if ( aes_decrypt(this->shared_read_key_, this->shared_read_key_len_,
                    recv_str, cipher_text) != 0 ) {
     cerr << "Couldn't decrypt." << endl;
     return -1;
