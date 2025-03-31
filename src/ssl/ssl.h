@@ -114,6 +114,8 @@ class Ssl {
 
   CryptoPP::RSA::PrivateKey private_key_;
   CryptoPP::RSA::PublicKey public_key_;
+
+  char* cert_file_contents;
 };
 
 

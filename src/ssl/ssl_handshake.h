@@ -36,6 +36,8 @@ int send_server_key_exchange(Ssl* cnx, char* data, size_t length);
 
 int send_cert(Ssl* cnx, char* cert);
 
+int send_cert_verify(Ssl* cnx, char* cert_verify, size_t len);
+
 int send_finished(Ssl* cnx, char* finished, size_t length);
 
 int recv_data(Ssl* cnx, char*& data, const uint8_t type, const uint16_t version);
@@ -46,7 +48,11 @@ int recv_server_hello(Ssl* cnx, char*& data);
 
 int recv_client_key_exchange(Ssl* cnx, char*& data);
 
+int recv_certificate_request(Ssl* cnx, char*& data);
+
 int recv_cert(Ssl* cnx, char*& data);
+
+int recv_cert_verify(Ssl* cnx, char*& data);
 
 int recv_server_hello_done(Ssl* cnx, char* data);
 
@@ -128,6 +134,30 @@ int verify_tls_finished_msg(
     const unsigned char* received_finished,
     size_t received_size,
     bool is_verifying_client
+);
+
+std::vector<unsigned char> generate_certificate_request();
+
+size_t unpack_certificate_request(
+    const char* cert_request,
+    std::vector<uint8_t>& cert_types,
+    std::vector<uint16_t>& sig_algs
+);
+
+int validate_cert_request(
+    std::vector<uint8_t>& cert_types,
+    std::vector<uint16_t>& sig_algs
+);
+
+std::vector<unsigned char> generate_certificate_verify(
+    const std::vector<std::pair<char*, size_t> >& handshake_messages,
+    const CryptoPP::RSA::PrivateKey& private_key
+);
+
+int validate_certificate_verify(
+    const char* cert_verify_msg,
+    const std::vector<std::pair<char*, size_t> >& handshake_messages,
+    const CryptoPP::RSA::PublicKey& public_key
 );
 
 #endif //SSL_HANDSHAKE_H

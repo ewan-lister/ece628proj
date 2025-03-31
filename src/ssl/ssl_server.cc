@@ -30,6 +30,8 @@ SslServer::SslServer() {
     }
     this->logger_ = new Logger(("ssl_server_" + datetime + ".log"));
     this->tcp_->set_logger(this->logger_);
+    string instance_name = "server_cert_" + datetime;
+
 
     get_datetime(&datetime, "%Y/%m/%d %H:%M:%S");
     this->logger_->log("Server Log at " + datetime);
@@ -39,7 +41,6 @@ SslServer::SslServer() {
     // init rsa
     generate_rsa_keys(this->private_key_, this->public_key_);
     // generate self-signed cert for every instance
-    string instance_name = "server_cert";
     string private_key_file = instance_name + ".priv";
     string public_key_file = instance_name + ".pub";
     save_rsa_private_key(this->private_key_, private_key_file); // Update for multiple clients or servers
@@ -186,7 +187,16 @@ Ssl *SslServer::accept() {
      * cert authorities
      **/
     // 4. Send Certificate Request.
-
+    // vector<unsigned char> certificate_request = generate_certificate_request();
+    // std::string certificate_request_msg(certificate_request.begin(), certificate_request.end());
+    // // hs_messages.push_back(make_pair((char*)certificate_request_msg.c_str(), certificate_request_msg.size()));
+    // if (send_record(new_ssl_cxn, HS_CERTIFICATE_REQUEST,
+    //     VER_99, (char*)certificate_request_msg.c_str(),
+    //     certificate_request_msg.size()) != 0
+    // ) {
+    //     cerr << "Error sending certificate request" << endl;
+    //     return NULL;
+    // }
 
     /**
      *  Send SERVER_HELLO_DONE
@@ -198,7 +208,17 @@ Ssl *SslServer::accept() {
     }
 
     // 7. Receive Certificate and verify
-
+    char* certificate;
+    if (recv_cert(new_ssl_cxn, certificate) != 0) {
+        cerr << "Couldn't receive Certificate" << endl;
+        return NULL;
+    }
+    hs_messages.push_back(make_pair(certificate, strlen(certificate)));
+    // Convert to Crypto++ key
+    CryptoPP::RSA::PublicKey client_rsa_public_key;
+    load_and_verify_certificate(certificate, client_rsa_public_key);
+    // cout << "Server: Received client certificate" << endl;
+    // print_RSA_public_key(client_rsa_public_key);
 
     /**
      * Receive CLIENT_KEY_EXCHANGE
@@ -238,6 +258,20 @@ Ssl *SslServer::accept() {
         return NULL;
     }
 
+
+    // 9. Receivd and verify Certificate Verify message
+    char* certificate_verify;
+    if (recv_cert_verify(new_ssl_cxn, certificate_verify) != 0) {
+        cerr << "Couldn't receive Certificate Verify" << endl;
+        return NULL;
+    }
+    uint16_t sig_len = ((static_cast<uint16_t>(certificate_verify[0]) << 8) & 0xFFFF) |
+                       (static_cast<uint16_t>(certificate_verify[1]) & 0xFF);
+    if (validate_certificate_verify(certificate_verify, hs_messages, client_rsa_public_key) != 0 ) {
+        cout << "Certificate verify failed" << endl;
+        return NULL;
+    }
+    hs_messages.push_back(make_pair(certificate_verify, sig_len+2));
 
     CryptoPP::SecByteBlock server_random_block(
             reinterpret_cast<const byte*>(server_random), 32);
@@ -308,6 +342,8 @@ Ssl *SslServer::accept() {
     new_ssl_cxn->set_shared_read_mac_key(client_mac_key.data(), client_mac_key.size());
     new_ssl_cxn->set_shared_read_iv(client_write_iv.data(), client_write_iv.size());
 
+    free(certificate);
+    free(certificate_verify);
     free(client_hello);
     free(client_finished);
     hs_messages.clear();

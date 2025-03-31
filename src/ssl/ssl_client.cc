@@ -4,7 +4,6 @@
 #include "string.h"
 
 #include <iostream>
-#include <unistd.h>
 
 #include "dh.h"
 #include "integer.h"
@@ -27,9 +26,23 @@ SslClient::SslClient() {
   }
   this->logger_ = new Logger(("ssl_client_"+datetime+".log"));
   this->tcp_->set_logger(this->logger_);
+  string instance_name = "client_cert_" + datetime;
 
   get_datetime(&datetime, "%Y/%m/%d %H:%M:%S");
   this->logger_->log("Client Log at " + datetime);
+
+  // init rsa
+  generate_rsa_keys(this->private_key_, this->public_key_);
+  // cout << "Client: Generated RSA keys" << endl;
+  // print_RSA_public_key(this->public_key_);
+  // generate self-signed cert for every instance
+  string private_key_file = instance_name + ".priv";
+  string public_key_file = instance_name + ".pub";
+  save_rsa_private_key(this->private_key_, private_key_file); // Update for multiple clients or servers
+  generate_self_signed_cert(private_key_file.c_str(), public_key_file.c_str());
+  if (read_cert_file(cert_file_contents, public_key_file) != 0) {
+	this->logger_->log("Failed to read certificate file");
+  }
 }
 
 SslClient::~SslClient() {
@@ -148,20 +161,33 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
  	  // cout << "Server Key Exchange signature verification succeeded" << endl;
   }
 
-
-  // 4. Receive Server Key Exchange message
-  //  if (recv_server_key_exchange(this, nullptr) != 0) {
-  //    cerr << "Couldn't receive Server Key Exchange" << endl;
-  //    return -1;
-  //  }
-
   // 5. Receive Certificate Request message
+ //  char* certificate_request;
+ //  if (recv_certificate_request(this, certificate_request) != 0) {
+	// cerr << "Couldn't receive Certificate Request" << endl;
+	// return -1;
+ //  }
+ //  vector<uint8_t> cert_types;
+ //  vector<uint16_t> sig_algs;
+ //  size_t len = unpack_certificate_request(certificate_request, cert_types, sig_algs);
+ //  hs_messages.push_back(make_pair(certificate_request, len));
+ //  if (validate_cert_request(cert_types, sig_algs) != 0) {
+	// cerr << "Certificate Request validation failed" << endl;
+ //  	return -1;
+ //  }
+ //  cout << "Certificate Request validation succeeded" << endl;
 
 
   // 6. Receive Server Hello Done message
   if (recv_server_hello_done(this, nullptr) != 0) {
     cerr << "Couldn't receive Server Hello Done" << endl;
     return -1;
+  }
+
+  hs_messages.push_back(make_pair(cert_file_contents, strlen(cert_file_contents)));
+  if (send_cert(this, cert_file_contents) != 0) {
+  	cerr << "Couldn't send Certificate" << endl;
+  	return -1;
   }
 
   //  cout << "Received server hello done: " << endl;
@@ -267,15 +293,15 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   // cout << "Client write iv: " << format_key_data(client_write_iv) << endl;
   // cout << "Sent Client Key Exchange: " << endl;
 
-  // Handle RSA/DHE
+  // 8. Send Certificate Verify message
+  vector<unsigned char> cert_verify = generate_certificate_verify(hs_messages, this->private_key_);
+  std:string cert_verify_str(cert_verify.begin(), cert_verify.end());
+  hs_messages.push_back(make_pair((char*)cert_verify_str.c_str(), cert_verify_str.size()));
+  if (send_cert_verify(this, (char*)cert_verify_str.c_str(), cert_verify_str.size()) != 0) {
+	  cout << "Error sending certificate verify" << endl;
+  	  return -1;
+  }
 
-  // Handle handshake
-
-  // Handle key exchange
-
-  // Save key and key len
-
-  // cout << "Client Number of handshake messages: " << hs_messages.size() << endl;
   // cout << "Client finished message master secret: " << endl;
   // print_buffer_hex(master_secret.data(), 48);
   // Send Finished message
@@ -310,6 +336,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   }
   // cout << "Sucessfully verified server finished message" << endl;
 
+  // free(certificate_request);
   free(certificate);
   free(server_hello);
   free(server_finished);

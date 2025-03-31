@@ -28,8 +28,6 @@ class SslServer: public Ssl {
   void handleErrors(const std::string& msg);
 
  // const BIGNUM* dh_pub_key;
- char* cert_file_contents;
-
  private:
   std::vector<Ssl*> clients_;
   bool closed_;

@@ -313,8 +313,8 @@ int send_cert(Ssl* cnx, char* cert) {
     return send_record(cnx, Ssl::HS_CERTIFICATE, Ssl::VER_99, cert, strlen(cert));
 }
 
-int send_cert_request(Ssl* cnx) {
-    return send_record(cnx, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99, nullptr, 0);
+int send_cert_verify(Ssl* cnx, char* data, size_t length) {
+    return send_record(cnx, Ssl::HS_CERTIFICATE_VERIFY, Ssl::VER_99, data, length);
 }
 
 int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
@@ -374,6 +374,14 @@ int recv_client_hello(Ssl* cnx, char*& data) {
 
 int recv_cert(Ssl* cnx, char*& data) {
     return recv_data(cnx, data, Ssl::HS_CERTIFICATE, Ssl::VER_99);
+}
+
+int recv_cert_verify(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_CERTIFICATE_VERIFY, Ssl::VER_99);
+}
+
+int recv_certificate_request(Ssl* cnx, char*& data) {
+    return recv_data(cnx, data, Ssl::HS_CERTIFICATE_REQUEST, Ssl::VER_99);
 }
 
 int recv_server_hello_done(Ssl* cnx, char* data) {
@@ -1038,4 +1046,162 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
     *out_dh = dh.release();
 
     return server_key_exchange;
+}
+
+std::vector<unsigned char> generate_certificate_request() {
+    // Certificate request structure:
+    // 1) certificate_types (1 byte length + types)
+    // 2) supported_signature_algorithms (2 bytes length + algorithms)
+    // 3) certificate_authorities (2 bytes length + authorities)
+
+    std::vector<unsigned char> cert_request;
+
+    // Certificate types we accept (RSA only)
+    const unsigned char cert_types[] = {0x01}; // RSA_SIGN(1)
+    cert_request.push_back(sizeof(cert_types));  // Length of certificate types
+    cert_request.insert(cert_request.end(), cert_types, cert_types + sizeof(cert_types));
+
+    // Supported signature algorithms
+    const unsigned char sig_algs[] = {
+        // Only use SHA1 for now. Need to move to SHA256
+        0x02, 0x01,  // RSA + SHA1
+        // 0x04, 0x01,  // RSA + SHA256
+        // 0x05, 0x01,  // RSA + SHA384
+        // 0x06, 0x01   // RSA + SHA512
+    };
+
+    // Add signature algorithms length (2 bytes)
+    cert_request.push_back(0x00);
+    cert_request.push_back(sizeof(sig_algs));
+    // Add signature algorithms
+    cert_request.insert(cert_request.end(), sig_algs, sig_algs + sizeof(sig_algs));
+
+    return cert_request;
+}
+
+size_t unpack_certificate_request(
+    const char* cert_request,
+    std::vector<uint8_t>& cert_types,
+    std::vector<uint16_t>& sig_algs
+) {
+    size_t offset = 0;
+
+    cout << "Unpacking Certificate Request..." << endl;
+    // Get certificate types
+    uint8_t cert_types_len = static_cast<uint8_t>(cert_request[offset++]);
+    for (size_t i = 0; i < cert_types_len; i++) {
+        cert_types.push_back(static_cast<uint8_t>(cert_request[offset++]));
+    }
+    cout << "cert_types_len: " << cert_types_len << endl;
+
+    // Get signature algorithms
+    uint16_t sig_algs_len = ((static_cast<uint16_t>(cert_request[offset]) << 8) & 0xFF) |
+                            (static_cast<uint16_t>(cert_request[offset + 1]) & 0xFF );
+    offset += 2;
+
+    // Each signature algorithm is a 2-byte value
+    for (size_t i = 0; i < sig_algs_len; i += 2) {
+        uint16_t alg = (static_cast<uint16_t>(cert_request[offset + i]) << 8) |
+                       static_cast<uint16_t>(cert_request[offset + i + 1]);
+        sig_algs.push_back(alg);
+    }
+    cout << "sig_algs_len: " << sig_algs_len << endl;
+    offset += sig_algs_len;
+
+    return offset;
+}
+
+int validate_cert_request(
+    std::vector<uint8_t>& cert_types,
+    std::vector<uint16_t>& sig_algs
+) {
+    if (cert_types[0] != 0x01) { // RSA_SIGN
+        std::cerr << "Unsupported certificate type, expected RSA_SIGN (0x01)" << std::endl;
+        return -1;
+    }
+
+    if (sig_algs[0] != 0x0201) { // RSA + SHA1
+        std::cerr << "Unsupported signature algorithm, expected RSA+SHA1 (0x0201)" << std::endl;
+        return -1;
+    }
+}
+
+std::vector<unsigned char> generate_certificate_verify(
+    const std::vector<std::pair<char*, size_t> >& handshake_messages,
+    const CryptoPP::RSA::PrivateKey& private_key
+) {
+    CryptoPP::AutoSeededRandomPool rng;
+    // Concatenate all handshake messages for signing
+    std::vector<unsigned char> data_to_sign;
+    for (const auto& [msg, len] : handshake_messages) {
+        data_to_sign.insert(data_to_sign.end(),
+            reinterpret_cast<unsigned char*>(msg),
+            reinterpret_cast<unsigned char*>(msg) + len);
+    }
+
+    // Create RSA signer with SHA1
+    CryptoPP::RSASSA_PKCS1v15_SHA_Signer signer(private_key);
+
+    // Generate signature
+    std::vector<unsigned char> signature(signer.MaxSignatureLength());
+    size_t sig_len = signer.SignMessage(
+        rng,
+        data_to_sign.data(),
+        data_to_sign.size(),
+        signature.data()
+    );
+    // Format Certificate Verify message:
+    // uint16_t signature_length
+    // opaque signature[signature_length]
+    std::vector<unsigned char> cert_verify;
+    cert_verify.push_back(static_cast<unsigned char>((sig_len >> 8) & 0xFF));
+    cert_verify.push_back(static_cast<unsigned char>(sig_len & 0xFF));
+    cert_verify.insert(cert_verify.end(), signature.begin(), signature.end());
+
+    return cert_verify;
+}
+
+int validate_certificate_verify(
+    const char* cert_verify_msg,
+    const vector<pair<char*, size_t> >& handshake_messages,
+    const CryptoPP::RSA::PublicKey& public_key
+) {
+    // Get signature length from first 2 bytes
+    uint16_t sig_len = ((static_cast<uint16_t>(cert_verify_msg[0]) << 8) & 0xFFFF) |
+                       (static_cast<uint16_t>(cert_verify_msg[1]) & 0xFF);
+
+    // Extract signature
+    const unsigned char* signature =
+        reinterpret_cast<const unsigned char*>(cert_verify_msg + 2);
+    // Concatenate all handshake messages for verification
+    vector<unsigned char> data_to_verify;
+    for (const auto& [msg, len] : handshake_messages) {
+        data_to_verify.insert(data_to_verify.end(),
+            reinterpret_cast<unsigned char*>(msg),
+            reinterpret_cast<unsigned char*>(msg) + len);
+    }
+
+    try {
+        // Create RSA verifier with SHA1
+        CryptoPP::RSASSA_PKCS1v15_SHA_Verifier verifier(public_key);
+
+        // Verify signature
+        bool valid = verifier.VerifyMessage(
+            data_to_verify.data(),
+            data_to_verify.size(),
+            signature,
+            sig_len
+        );
+
+        if (!valid) {
+            cerr << "Certificate Verify signature validation failed" << endl;
+            return -1;
+        }
+
+        return 0;
+
+    } catch (const CryptoPP::Exception& e) {
+        cerr << "Crypto++ error: " << e.what() << endl;
+        return -1;
+    }
 }

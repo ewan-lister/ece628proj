@@ -24,6 +24,7 @@ Ssl::Ssl() {
   write_iv = NULL;
   write_iv_len_ = 0;
   read_iv = NULL;
+  cert_file_contents = NULL;
   read_iv_len_ = 0;
   write_seq_num_ = 0;
   read_seq_num_ = 0;
@@ -43,6 +44,7 @@ Ssl::Ssl(TCP* tcp) {
   write_iv_len_ = 0;
   read_iv = NULL;
   read_iv_len_ = 0;
+  cert_file_contents = NULL;
   write_seq_num_ = 0;
   read_seq_num_ = 0;
 }
@@ -65,6 +67,9 @@ Ssl::~Ssl() {
   }
   if ( read_iv != NULL ) {
     free(read_iv);
+  }
+  if ( cert_file_contents != NULL ) {
+    free(cert_file_contents);
   }
   if ( this->tcp_ ) {
     this->tcp_->socket_close();
