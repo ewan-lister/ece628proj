@@ -472,12 +472,9 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
 
     CryptoPP::AutoSeededRandomPool rng;
 
-    cout << "Begining to generate DHE keys" << endl;
     // Create DH object with FFDHE2048 parameters from RFC 7919
     CryptoPP::Integer p, q, g;
     generate_pqg(p, q, g);
-    // cout << "DH Parameter g: " << g << endl;
-    // cout << "DH Parameter p: " << p << endl;
 
     // Initialize DH object with parameters
     out_dh = new CryptoPP::DH();
@@ -494,8 +491,6 @@ std::vector<unsigned char> generate_dhe_server_key_exchange(
     std::vector<unsigned char> signature = generate_dhe_server_key_exchange_signature(
         client_random, server_random, serialized_params, server_key
     );
-    // cout << "Signature: " << endl;
-    // print_buffer_hex(signature, signature.size());
 
     // Assemble final message
     std::vector<unsigned char> server_key_exchange;

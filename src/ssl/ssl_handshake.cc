@@ -318,12 +318,10 @@ int send_cert_request(Ssl* cnx) {
 }
 
 int send_client_key_exchange(Ssl* cnx, char*& data, size_t length) {
-    // cout << "Sending client key exchange. len: " << length << endl;
     return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, data, length);
 }
 
 int send_client_key_exchange_dhe(Ssl* cnx, std::vector<unsigned char> data) {
-    // cout << "Sending client key exchange. len: " << length << endl;
     return send_record(cnx, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99, reinterpret_cast<char*>(data.data()), data.size());
 }
 
@@ -352,14 +350,12 @@ int recv_data(Ssl* cnx, char*& data,const uint8_t type,const uint16_t version) {
     }
 
     data = (char*)malloc(recv_record.hdr.length);
-    // cout << "Received data of length " << recv_record.hdr.length << endl;
     memcpy(data, recv_record.data, recv_record.hdr.length);
 
     return 0;
 }
 
 int recv_client_key_exchange(Ssl* cnx, char*& data) {
-    // cout << "Received client key exchange" << endl;
     return recv_data(cnx, data, Ssl::HS_CLIENT_KEY_EXCHANGE, Ssl::VER_99);
 }
 
@@ -369,22 +365,18 @@ int recv_finished(Ssl* cnx, char*& data) {
 
 
 int recv_server_hello(Ssl* cnx, char*& data) {
-    // cout << "Received server hello" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO, Ssl::VER_99);
 }
 
 int recv_client_hello(Ssl* cnx, char*& data) {
-    // cout << "Received client hello" << endl;
     return recv_data(cnx, data, Ssl::HS_CLIENT_HELLO, Ssl::VER_99);
 }
 
 int recv_cert(Ssl* cnx, char*& data) {
-    // cout << "Received certificate" << endl;
     return recv_data(cnx, data, Ssl::HS_CERTIFICATE, Ssl::VER_99);
 }
 
 int recv_server_hello_done(Ssl* cnx, char* data) {
-    // cout << "Received server hello done" << endl;
     return recv_data(cnx, data, Ssl::HS_SERVER_HELLO_DONE, Ssl::VER_99);
 }
 
@@ -494,7 +486,6 @@ int load_and_verify_certificate(char *&certificate, CryptoPP::RSA::PublicKey& cr
     cryptopp_key.SetPublicExponent(convert_bignum_to_integer(e));
 
     // All verification steps passed successfully
-    // std::cout << "Certificate verified successfully!" << std::endl;
     result = 0;
 
 cleanup:
@@ -545,7 +536,6 @@ int pack_client_key_exchange(char*& buffer, const char* data, size_t length) {
     offset = pack_uint16_at_offset(buffer, offset, (uint16_t) length);
     offset = pack_bytes(buffer, offset, data, length);
 
-    // cout << "Client key exchange length: " << offset << endl;
     return offset;
 }
 
@@ -576,7 +566,6 @@ int unpack_client_key_exchange(char* buffer, char*& data) {
     // Read total length from first 2 bytes (big-endian)
     uint16_t total_length = (static_cast<uint16_t>((buffer[offset]) << 8) & 0xFFFF) |
                        static_cast<uint16_t>(buffer[offset + 1] & 0xFF);
-    // cout << "Server Client key exchange length: " << total_length << endl;
     offset += 2;
 
     data = (char*)malloc(total_length*sizeof(char));
@@ -866,18 +855,9 @@ std::vector<unsigned char> compute_tls_finished_msg(
     bool is_client,
     size_t finished_size
 ) {
-    // cout << "Starting finished message computation" << endl;
-    // cout << "Master secret used: " << endl;
-    // print_buffer_hex((unsigned char*)master_secret, 48);
-    // cout << "Handshake messages: " << endl;
-    // Step 1: Concatenate all handshake messages
     size_t total_length = 0;
-    uint8_t counter = 0;
     for (pair<char*, size_t> message : handshake_messages) {
-        // cout << "Message " << (int)counter << ": " << endl;
-        // print_buffer_hex(message.first, message.second);
         total_length += message.second;
-        // counter++;
     }
 
     const char* finished_label =
@@ -923,8 +903,6 @@ std::vector<unsigned char> compute_tls_finished_msg(
     HMAC_Final(hmac_ctx, finished_msg.data(), &out_len);
     HMAC_CTX_free(hmac_ctx);
 
-    // cout << "Finished message: " << endl;
-    // print_buffer_hex(finished_msg, 12);
     return finished_msg;
 }
 
@@ -943,12 +921,7 @@ int verify_tls_finished_msg(
         received_size
     );
 
-    // cout << "Verification master secret: " << endl;
-    // print_buffer_hex((unsigned char*)master_secret, 48);
-    // cout << "Expected Finished message: " << endl;
-    // print_buffer_hex(expected_finished, 12);
-    // cout << "Received Finished message: " << endl;
-    print_buffer_hex((unsigned char*)received_finished, 12);
+    // print_buffer_hex((unsigned char*)received_finished, 12);
     // Compare the expected and received Finished messages
     if (expected_finished.size() != received_size) {
         cout << "Received Finished message does not match expected size" << endl;

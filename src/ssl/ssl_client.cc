@@ -106,7 +106,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     return -1;
   }
   hs_messages.push_back(make_pair(certificate, strlen(certificate)));
-  cout << "Client: Certifcate message length: " << strlen(certificate) << endl;
+  // cout << "Client: Certifcate message length: " << strlen(certificate) << endl;
   // Convert to Crypto++ key
   CryptoPP::RSA::PublicKey server_rsa_public_key;
   load_and_verify_certificate(certificate, server_rsa_public_key);
@@ -145,7 +145,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   		cerr << "Server Key Exchange signature verification failed" << endl;
  		return -1;
   	  }
- 	  cout << "Server Key Exchange signature verification succeeded" << endl;
+ 	  // cout << "Server Key Exchange signature verification succeeded" << endl;
   }
 
 
@@ -218,13 +218,11 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
    	}
     free(client_key_exchange);
   } else {
-  	cout << "Starting DHE client key exchange" << endl;
     CryptoPP::SecByteBlock client_dhe_public_key;
   	CryptoPP::SecByteBlock client_dhe_private_key;
     CryptoPP::DH dh;
   	generate_dhe_client_keypair(p, g, client_dhe_private_key, client_dhe_public_key, dh);
 
-  	cout << "Sending Client Key Exchange" << endl;
     std::vector<unsigned char> client_key_exchange;
 	pack_client_key_exchange_dhe(client_dhe_public_key, client_key_exchange);
  	if (send_client_key_exchange_dhe(this, client_key_exchange) != 0) {
@@ -258,7 +256,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
       	cout << "Error generating keys" << endl;
        	return -1;
    	}
-  	cout << "Completed DHE client key exchange" << endl;
+  	// cout << "Completed DHE client key exchange" << endl;
   }
 
   // cout << "Client master secret: " << format_key_data(master_secret) << endl;
@@ -304,7 +302,7 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
     cerr << "Finished message verification failed" << endl;
     return -1;
   }
-  cout << "Sucessfully verified server finished message" << endl;
+  // cout << "Sucessfully verified server finished message" << endl;
 
   free(certificate);
   free(server_hello);
