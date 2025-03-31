@@ -300,7 +300,9 @@ Ssl *SslServer::accept() {
     }
 
     new_ssl_cxn->set_shared_write_key(server_write_key.data(), server_write_key.size());
+    new_ssl_cxn->set_shared_write_iv(server_write_iv.data(), server_write_iv.size());
     new_ssl_cxn->set_shared_read_key(client_write_key.data(), client_write_key.size());
+    new_ssl_cxn->set_shared_read_iv(client_write_iv.data(), client_write_iv.size());
 
     free(client_hello);
     free(client_finished);

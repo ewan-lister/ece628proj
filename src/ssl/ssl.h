@@ -82,16 +82,27 @@ class Ssl {
   // for key
   virtual int set_shared_write_key(const unsigned char * const shared_key, size_t key_len);
   virtual int set_shared_read_key(const unsigned char * const shared_key, size_t key_len);
+  virtual int set_shared_write_iv(const unsigned char * const iv, size_t iv_len);
+  virtual int set_shared_read_iv(const unsigned char * const iv, size_t iv_len);
 
  protected:
   TCP* tcp_;
   Logger* logger_;
+
+  uint64_t write_seq_num_;
+  uint64_t read_seq_num_;
 
   unsigned char* shared_write_key_;
   size_t shared_write_key_len_;
 
   unsigned char* shared_read_key_;
   size_t shared_read_key_len_;
+
+  unsigned char* write_iv;
+  size_t write_iv_len_;
+
+  unsigned char* read_iv;
+  size_t read_iv_len_;
 
   CryptoPP::RSA::PrivateKey private_key_;
   CryptoPP::RSA::PublicKey public_key_;

@@ -13,7 +13,6 @@
 #include "sha.h"
 #include "hmac.h"
 #include "secblock.h"
-#include "hex.h"
 #include "ssl_handshake.h"
 
 using namespace std;
@@ -56,16 +55,23 @@ int generate_rsa_keys(CryptoPP::RSA::PrivateKey &private_key, CryptoPP::RSA::Pub
 }
 
 int aes_encrypt(const unsigned char* key, size_t key_len,
-                std::string *cipher_text, const std::string &plain_text) {
+                std::string *cipher_text, const std::string &plain_text,
+                const unsigned char* iv, uint64_t seq_num) {
 
   // https://www.cryptopp.com/wiki/CBC_Mode
   SecByteBlock aes_key(key, key_len);
-  byte iv[AES::BLOCKSIZE];
-  memset(iv, 0, AES::BLOCKSIZE);
+
+  // Create unique IV for each record by XORing with sequence number
+  unsigned char record_iv[16];
+  memcpy(record_iv, iv, 16);
+
+  for(int i = 0; i < 8; i++) {
+    record_iv[8+i] ^= (seq_num >> ((7-i)*8)) & 0xFF;
+  }
 
   try {
     CBC_Mode<AES>::Encryption aes_enc;
-    aes_enc.SetKeyWithIV(aes_key, aes_key.size(), iv);
+    aes_enc.SetKeyWithIV(aes_key, aes_key.size(), record_iv);
 
     StringSource ss(
       plain_text,
@@ -82,15 +88,22 @@ int aes_encrypt(const unsigned char* key, size_t key_len,
 }
 
 int aes_decrypt(const unsigned char* key, size_t key_len,
-                std::string *plain_text, const std::string &cipher_text) {
+                std::string *plain_text, const std::string &cipher_text,
+                const unsigned char* iv, uint64_t seq_num) {
 
   SecByteBlock aes_key(key, key_len);
-  byte iv[AES::BLOCKSIZE];
-  memset(iv, 0, AES::BLOCKSIZE);
+
+  // Create unique IV for each record by XORing with sequence number
+  unsigned char record_iv[16];
+  memcpy(record_iv, iv, 16);
+
+  for(int i = 0; i < 8; i++) {
+    record_iv[8+i] ^= (seq_num >> ((7-i)*8)) & 0xFF;
+  }
 
   try {
     CBC_Mode<AES>::Decryption aes_dec;
-    aes_dec.SetKeyWithIV(aes_key, aes_key.size(), iv);
+    aes_dec.SetKeyWithIV(aes_key, aes_key.size(), record_iv);
 
     StringSource ss(
       cipher_text,

@@ -290,7 +290,9 @@ int SslClient::connect(const std::string &ip, int port, uint16_t cxntype) {
   }
 
   this->set_shared_write_key(client_write_key.data(), client_write_key.size());
+  this->set_shared_write_iv(client_write_iv.data(), client_write_iv.size());
   this->set_shared_read_key(server_write_key.data(), server_write_key.size());
+  this->set_shared_read_iv(server_write_iv.data(), server_write_iv.size());
 
   // Receive Finished message
   char* server_finished;

@@ -17,6 +17,12 @@ Ssl::Ssl() {
   shared_write_key_len_ = 0;
   shared_read_key_ = NULL;
   shared_read_key_len_ = 0;
+  write_iv = NULL;
+  write_iv_len_ = 0;
+  read_iv = NULL;
+  read_iv_len_ = 0;
+  write_seq_num_ = 0;
+  read_seq_num_ = 0;
 }
 
 Ssl::Ssl(TCP* tcp) {
@@ -25,6 +31,12 @@ Ssl::Ssl(TCP* tcp) {
   shared_write_key_len_ = 0;
   shared_read_key_ = NULL;
   shared_read_key_len_ = 0;
+  write_iv = NULL;
+  write_iv_len_ = 0;
+  read_iv = NULL;
+  read_iv_len_ = 0;
+  write_seq_num_ = 0;
+  read_seq_num_ = 0;
 }
 
 Ssl::~Ssl() {
@@ -33,6 +45,12 @@ Ssl::~Ssl() {
   }
   if ( shared_read_key_ != NULL ) {
     free(shared_read_key_);
+  }
+  if ( write_iv != NULL ) {
+    free(write_iv);
+  }
+  if ( read_iv != NULL ) {
+    free(read_iv);
   }
   if ( this->tcp_ ) {
     this->tcp_->socket_close();
@@ -61,6 +79,22 @@ int Ssl::get_port() const {
 }
 
 // set write key
+int Ssl::set_shared_write_iv(const unsigned char * const iv, size_t iv_len) {
+  this->write_iv_len_ = iv_len;
+  this->write_iv = (unsigned char *) malloc(iv_len*sizeof(unsigned char));
+  memcpy(this->write_iv, iv, iv_len);
+  return 0;
+}
+
+// set write key
+int Ssl::set_shared_read_iv(const unsigned char * const iv, size_t iv_len) {
+  this->read_iv_len_ = iv_len;
+  this->read_iv = (unsigned char *) malloc(iv_len*sizeof(unsigned char));
+  memcpy(this->read_iv, iv, iv_len);
+  return 0;
+}
+
+// set write key
 int Ssl::set_shared_write_key(const unsigned char * const shared_key, size_t key_len) {
   this->shared_write_key_len_ = key_len;
   this->shared_write_key_ = (unsigned char *) malloc(key_len*sizeof(unsigned char));
@@ -80,6 +114,8 @@ int Ssl::set_shared_read_key(const unsigned char * const shared_key, size_t key_
 // returns 0 on success, -1 otherwise
 
 int Ssl::send(const std::string &send_str) {
+  uint64_t record_seq_num = write_seq_num_++;
+
   // make a record
   Record send_record;
   send_record.hdr.type = REC_APP_DATA;
@@ -89,7 +125,7 @@ int Ssl::send(const std::string &send_str) {
   string cipher_text;
 
   if (aes_encrypt(this->shared_write_key_, this->shared_write_key_len_,
-                   &cipher_text, send_str) != 0 ) {
+                   &cipher_text, send_str, this->write_iv, record_seq_num) != 0 ) {
     cerr << "Couldn't encrypt." << endl;
     return -1;
   }
@@ -110,6 +146,8 @@ int Ssl::send(const std::string &send_str) {
 }
 
 int Ssl::recv(std::string *recv_str) {
+  uint64_t record_seq_num = read_seq_num_++;
+
   // receive record
   Record recv_record;
   if ( recv(&recv_record) == -1 ) {
@@ -129,7 +167,7 @@ int Ssl::recv(std::string *recv_str) {
 
   // decrypt
   if ( aes_decrypt(this->shared_read_key_, this->shared_read_key_len_,
-                   recv_str, cipher_text) != 0 ) {
+                   recv_str, cipher_text, this->read_iv, record_seq_num) != 0 ) {
     cerr << "Couldn't decrypt." << endl;
     return -1;
   }
