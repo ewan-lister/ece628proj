@@ -934,7 +934,7 @@ int verify_tls_finished_msg(
         result |= expected_finished[i] ^ received_finished[i];
     }
 
-    cout << "Finished message verification result: " << (result == 0 ? "SUCCESS" : "FAILED") << endl;
+    // cout << "Finished message verification result: " << (result == 0 ? "SUCCESS" : "FAILED") << endl;
     return (result == 0) ? 0 : -1;
 }
 

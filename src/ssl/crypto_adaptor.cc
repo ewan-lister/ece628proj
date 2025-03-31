@@ -112,8 +112,6 @@ int aes_encrypt(const unsigned char* key, size_t key_len,
             new StringSink( *cipher_text )
             )
           );
-        cout << "Ciphertext length: " << cipher_text->length() << endl;
-        cout << "Completed authed encryption" << endl;
     } catch(const CryptoPP::Exception &e) {
         cerr << e.what() << endl;
         return -1;
@@ -180,9 +178,6 @@ int aes_decrypt(const unsigned char* key, size_t key_len,
 
     // Add plaintext
     auth_data.insert(auth_data.end(), plain_text->begin(), plain_text->end());
-
-      cout << "auth data to verify: " << endl;
-    print_buffer_hex(auth_data, auth_data.size());
 
     // Calculate and verify MAC
     CryptoPP::SecByteBlock calculated_mac(hmac.DigestSize());
