@@ -373,15 +373,15 @@ class TLS:
         
         return certificate
     
-    def send_server_key_exchange_dhe(self, server_private_key):
-        """Send ServerKeyExchange with DHE parameters
-        Args:
-            server_private_key (rsa.RSAPrivateKey): Server's private key for signing
-        Returns:
-            dh.DHPrivateKey: Server's DH private key
-        """
+    def send_server_key_exchange_dhe(self, server_private_key, dh_parameters=None):
+        """Send ServerKeyExchange with DHE parameters"""
+        import time
+        start_time = time.time()
+        
+        # Use provided or generate new parameters
+        parameters = dh_parameters or dh.generate_parameters(generator=2, key_size=2048)
+        
         # Generate DH parameters
-        parameters = dh.generate_parameters(generator=2, key_size=2048)
         dh_private_key = parameters.generate_private_key()
         public_numbers = dh_private_key.public_key().public_numbers()
         parameter_numbers = public_numbers.parameter_numbers
@@ -1054,46 +1054,47 @@ class TLS:
         return p_hash(secret, label + seed, length)
 
     def send_application_data(self, data):
+        """Send encrypted application data"""
         self.logger.info("Sending encrypted application data")
-        self.logger.debug(f"- Plaintext length: {len(data)} bytes")
-        """Send encrypted application data
-        Args:
-            data: Data to send (bytes or str)
-        """
-        # Convert string to bytes if needed
         if isinstance(data, str):
             data = data.encode('utf-8')
         elif not isinstance(data, bytes):
             raise TypeError("Data must be bytes or str")
 
-        # Create cipher
+        self.logger.debug(f"- Plaintext: {data}")
+        self.logger.debug(f"- Plaintext length: {len(data)} bytes")
+
+        # Generate random IV for this message
+        message_iv = os.urandom(16)
+        self.logger.debug(f"- Generated IV: {message_iv.hex()}")
+
+        # Create cipher with unique IV
         cipher = Cipher(
             algorithms.AES256(self.write_key),
-            modes.CBC(self.write_iv),
+            modes.CBC(message_iv),
             backend=default_backend()
         )
         encryptor = cipher.encryptor()
 
-        # Add padding using symmetric padding
+        # Add padding and encrypt
         padder = symmetric_padding.PKCS7(128).padder()
         padded_data = padder.update(data) + padder.finalize()
-
-        # Encrypt
         ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+        self.logger.debug(f"- Ciphertext: {ciphertext.hex()}")
 
         # Generate MAC
         mac = hmac.HMAC(self.write_mac_key, hashes.SHA256(), backend=default_backend())
-        mac.update(ciphertext)
+        mac.update(message_iv + ciphertext)
         mac_value = mac.finalize()
+        self.logger.debug(f"- MAC: {mac_value.hex()}")
 
-        # Send encrypted data with MAC
-        self.send_tls_record(23, (3,3), ciphertext + mac_value)
+        # Send IV + encrypted data + MAC
+        full_message = message_iv + ciphertext + mac_value
+        self.send_tls_record(23, (3,3), full_message)
+        self.logger.debug(f"Sent {len(full_message)} bytes")
 
     def receive_application_data(self) -> bytes:
-        """Receive and decrypt application data
-        Returns:
-            bytes: Decrypted data
-        """
+        """Receive and decrypt application data"""
         self.logger.info("Receiving encrypted application data")
         content_type, version, encrypted_data = self.receive_tls_record()
         
@@ -1101,24 +1102,30 @@ class TLS:
             raise ValueError(f"Expected application data, got type {content_type}")
         
         self.logger.debug(f"- Received {len(encrypted_data)} bytes of encrypted data")
+        self.logger.debug(f"- Full encrypted data: {encrypted_data.hex()}")
         
-        # Split MAC from ciphertext
-        ciphertext = encrypted_data[:-32]  # Last 32 bytes are MAC
-        received_mac = encrypted_data[-32:]
+        # Extract IV, ciphertext and MAC
+        message_iv = encrypted_data[:16]  # First 16 bytes are IV
+        ciphertext = encrypted_data[16:-32]  # Middle portion is ciphertext
+        received_mac = encrypted_data[-32:]  # Last 32 bytes are MAC
+        
+        self.logger.debug(f"- IV: {message_iv.hex()}")
+        self.logger.debug(f"- Ciphertext: {ciphertext.hex()}")
+        self.logger.debug(f"- Received MAC: {received_mac.hex()}")
         
         # Verify MAC
         mac = hmac.HMAC(self.read_mac_key, hashes.SHA256(), backend=default_backend())
-        mac.update(ciphertext)
+        mac.update(message_iv + ciphertext)  # Include IV in MAC calculation
         calculated_mac = mac.finalize()
         
         # Use constant-time comparison
         if not hmac_stdlib.compare_digest(calculated_mac, received_mac):
             raise ValueError("MAC verification failed")
         
-        # Decrypt data
+        # Decrypt data using received IV
         cipher = Cipher(
             algorithms.AES256(self.read_key),
-            modes.CBC(self.read_iv),
+            modes.CBC(message_iv),  # Use message IV instead of static read_iv
             backend=default_backend()
         )
         decryptor = cipher.decryptor()
@@ -1130,3 +1137,12 @@ class TLS:
         
         self.logger.debug(f"- Decrypted {len(data)} bytes")
         return data
+
+    def send_alert(self, level, description):
+        """Send TLS alert message
+        Args:
+            level (int): Alert level (1 = warning, 2 = fatal)
+            description (int): Alert description (0 = close_notify)
+        """
+        alert = struct.pack('!BB', level, description)
+        self.send_tls_record(21, (3,3), alert)  # 21 is Alert content type

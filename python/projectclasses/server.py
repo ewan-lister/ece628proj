@@ -10,6 +10,7 @@ from projectclasses.crypto import Certificate
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import dh
 
 class Server:
 
@@ -37,6 +38,10 @@ class Server:
             subject_name=f"TLS Server {host}:{port}",
             issuer_name=f"TLS Server CA"
         )
+        
+        self.logger.info("Pre-generating DH parameters...")
+        self.dh_parameters = dh.generate_parameters(generator=2, key_size=2048)
+        self.logger.info("DH parameters ready")
 
     def start(self):
         """Initialize and start the server"""
@@ -112,26 +117,28 @@ class Server:
             
             while self.running:
                 try:
-                    # Receive decrypted data
                     data = tls.receive_application_data()
                     if not data:
                         break
+                        
+                    # Echo back exactly what was received for verification
+                    tls.send_application_data(data)
                     
-                    self.logger.debug(f"Received from client {client_id}: {len(data)} bytes")
-                    
-                    # Process the data (example: echo back)
-                    response = data  # Or process data here
-                    
-                    # Send encrypted response
-                    tls.send_application_data(response)
-                    self.logger.debug(f"Sent to client {client_id}: {len(response)} bytes")
-                    
+                    # If this was the verification message, continue
+                    if data == b"encryption_test":
+                        continue
+                        
+                    # Otherwise try to decode and log the message
+                    try:
+                        decoded = data.decode('utf-8')
+                        self.logger.info(f"Received from client {client_id}: {decoded}")
+                    except UnicodeDecodeError:
+                        self.logger.info(f"Received {len(data)} bytes from client {client_id}")
+                        
                 except Exception as e:
                     self.logger.error(f"Error processing message from client {client_id}: {e}")
                     break
                     
-        except Exception as e:
-            self.logger.error(f"Error handling client {client_id}: {e}")
         finally:
             self.close_client(client_id)
 
@@ -188,7 +195,7 @@ class Server:
         # send server certificate
         tls.send_server_certificate(self.certificate)
         # send server key exchange
-        server_dh_private_key = tls.send_server_key_exchange_dhe(self.certificate.private_key)
+        server_dh_private_key = tls.send_server_key_exchange_dhe(self.certificate.private_key, self.dh_parameters)
         # send certificate request
         tls.send_certificate_request()
         # send ServerHelloDone
